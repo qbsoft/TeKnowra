@@ -16,6 +16,12 @@ description: 按 CRM 里的审查清单做合同风险审查。当用户提供�
 
 1. `get_review_checklist(templateId)` 取全部条款与风险点，每条带 `itemId`。
    这是审查的**依据**。
+   注意每个条款还带一个 `clauseDesc`——**这个条款本应包含哪些要素**。
+   判「××信息缺失」「要素不完整」这类风险时，尺子就是它：拿 `clauseDesc`
+   列出的要素逐项去合同里找，缺哪项就是哪项。
+   例：标的物条款的 `clauseDesc` 要求「名称、品牌型号、规格（功能要求、
+   核心技术参数）、数量、价款」；合同只写了名称/型号/数量/价格，
+   缺品牌与技术参数——这就是命中，而不是"主要信息都有，算齐全"。
 2. 逐条 `submit_review_finding(taskId, itemId, ...)`。**pass 也必须提交** ——
    用户要能区分「查过且没问题」和「根本没查」。
 3. `get_review_summary(taskId)` 对账，`missingCount` 必须为 0 才能出报告。
