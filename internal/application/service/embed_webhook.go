@@ -95,7 +95,7 @@ func DispatchEmbedWebhook(ch *types.EmbedChannel, eventType, sessionID string, p
 		if secret != "" {
 			mac := hmac.New(sha256.New, []byte(secret))
 			_, _ = mac.Write(raw)
-			req.Header.Set("X-WeKnora-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+			req.Header.Set("X-TeKnowra-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
 		}
 		resp, err := newEmbedWebhookHTTPClient().Do(req)
 		if err != nil {

@@ -456,14 +456,14 @@ export default {
       directWarning: '直接传用户 ID 会信任调用方请求头，仅适用于可信服务端到服务端调用。',
       directWarningDetail: '任何持有 API Key 的调用方都可以通过修改用户 ID 请求头冒充其他外部用户，从而共用或劫持其 MCP OAuth 授权。请勿用于浏览器或不可信客户端；面向终端用户请使用「签名 Token」。',
       signedRecommended: '推荐给面向用户的应用：由你的业务后端为外部用户签发短期 HS256 JWT。',
-      signedFlowDetail: 'HMAC 密钥仅保存在 WeKnora 与你的可信后端，切勿放入请求或下发给浏览器。请求头里传的是用该密钥签出的 JWT 字符串（每次签发或过期后会变），不是密钥本身。JWT 须包含 sub（外部用户 ID）、tenant_id、aud=weknora、exp（有效期不超过 24 小时）。',
+      signedFlowDetail: 'HMAC 密钥仅保存在 WeKnora 与你的可信后端，切勿放入请求或下发给浏览器。请求头里传的是用该密钥签出的 JWT 字符串（每次签发或过期后会变），不是密钥本身。JWT 须包含 sub（外部用户 ID）、tenant_id、aud=teknowra、exp（有效期不超过 24 小时）。',
       directHeader: '用户 ID 请求头',
       requireDirectHeader: '必须携带用户 ID',
       requireDirectHeaderDesc: '开启后，缺少用户 ID 请求头的 API Key 请求将被拒绝；关闭则按整个空间统一处理，不区分具体终端用户。',
       tokenHeader: 'Token 请求头',
       tokenHeaderDesc: '客户端在该固定请求头中携带后端签发的 JWT。',
       hmacSecret: 'HMAC 密钥',
-      hmacSecretDesc: '与 WeKnora 保存的同一份密钥；仅用于后端签发 JWT，不要作为请求头发送。',
+      hmacSecretDesc: '与 TeKnowra 保存的同一份密钥；仅用于后端签发 JWT，不要作为请求头发送。',
       secretConfigured: '已配置密钥（不可回看）；输入新值可轮换',
       secretSavedCopyHint: '密钥已保存，请立即复制到后端配置。离开本页后将无法再次查看。',
       generateSecret: '生成密钥',
@@ -472,7 +472,7 @@ export default {
       hmacSecretResetConfirmOk: '确认重置',
       hmacSecretResetConfirmCancel: '取消',
       tokenSignExample: '后端签发 JWT 示例（Go）',
-      signedRequestStep0: '# 0. 在你的后端签发 JWT（HS256，aud=weknora，sub=用户 ID，tenant_id={tenantId}，exp 不超过 24 小时）',
+      signedRequestStep0: '# 0. 在你的后端签发 JWT（HS256，aud=teknowra，sub=用户 ID，tenant_id={tenantId}，exp 不超过 24 小时）',
       signedRequestStep0Hint: '#    将 JWT 放入 {headerName} 请求头，不要传 HMAC 密钥',
       requestExampleCreateSession: '# 1. 创建会话',
       requestExampleAgentChat: '# 2. Agent 对话（SSE；将 <session_id> 替换为第 1 步返回的 id）',
@@ -2081,7 +2081,7 @@ export default {
     pinned: '已置顶'
   },
   platform: {
-    subtitle: '大模型驱动的企业级知识框架',
+    subtitle: '大模型驱动的企业级知识平台',
     description: 'RAG 检索、智能体推理、Wiki 知识库，让文档真正被理解和运用',
     rag: 'RAG 增强生成',
     agent: 'ReAct 智能体',
@@ -3973,9 +3973,9 @@ export default {
     allowFileUploadDesc: '开启后，访客可上传图片与文档附件。仅当绑定的智能体已启用图片上传时才会生效。',
     webhookUrl: 'Webhook 地址',
     webhookUrlPlaceholder: 'https://your-server.example.com/weknora/embed-events',
-    webhookUrlDesc: '可选。访客发消息与助手回复完成时，WeKnora 会向该 HTTPS 地址 POST 事件（message_sent / message_received）。',
+    webhookUrlDesc: '可选。访客发消息与助手回复完成时，TeKnowra 会向该 HTTPS 地址 POST 事件（message_sent / message_received）。',
     webhookSecret: 'Webhook 签名密钥',
-    webhookSecretPlaceholder: '用于 HMAC-SHA256 签名（X-WeKnora-Signature）',
+    webhookSecretPlaceholder: '用于 HMAC-SHA256 签名（X-TeKnowra-Signature）',
     webhookSecretKeep: '留空表示不修改已保存的密钥',
     webhookSecretDesc: '可选。配置后请求体会带 sha256 签名头，便于你的服务端校验来源。',
     agentWebSearchDisabledHint: '当前智能体未启用联网搜索，访客端不会显示联网按钮。请先在智能体设置中开启联网搜索。',
@@ -4086,7 +4086,7 @@ export default {
     }
   },
   createChat: {
-    title: 'Hi，我是 WeKnora，让你的知识触手可及',
+    title: 'Hi，我是 TeKnowra，让你的知识触手可及',
     newSessionTitle: '新会话',
     messages: {
       createFailed: '创建会话失败',
@@ -4330,11 +4330,11 @@ export default {
     haveAccount: '已有账户？',
     backToLogin: '返回登录',
     loginHint: '登录以继续使用；首次使用请在下方创建账户。',
-    firstTime: '首次使用 WeKnora？',
+    firstTime: '首次使用 TeKnowra？',
     registerSuccess: '注册成功，请登录',
     registerFailed: '注册失败',
-    subtitle: 'RAG 问答、ReAct 智能体与 Wiki 知识库，大模型驱动的企业级知识框架',
-    registerSubtitle: '创建账户并开始使用 WeKnora',
+    subtitle: 'RAG 问答、ReAct 智能体与 Wiki 知识库，大模型驱动的企业级知识平台',
+    registerSubtitle: '创建账户并开始使用 TeKnowra',
     emailPlaceholder: '输入邮箱地址',
     passwordPlaceholder: '输入密码（8-32个字符，包含字母和数字）',
     confirmPasswordPlaceholder: '再次输入密码',
@@ -5764,10 +5764,10 @@ export default {
       },
       knowledge: {
         title: '创建你的知识库',
-        desc: '知识库是一切的起点：上传文档、网页或 FAQ，WeKnora 会自动解析并建立索引。点击这里进入知识库。'
+        desc: '知识库是一切的起点：上传文档、网页或 FAQ，TeKnowra 会自动解析并建立索引。点击这里进入知识库。'
       },
       welcome: {
-        title: '欢迎使用 WeKnora',
+        title: '欢迎使用 TeKnowra',
         desc: '只需几步，带你快速了解知识库、对话与智能体的核心用法。点击「下一步」开始。'
       }
     }

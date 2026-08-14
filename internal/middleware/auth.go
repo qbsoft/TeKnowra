@@ -618,7 +618,7 @@ func verifyExternalUserJWT(tokenString string, tenantID uint64, secret string) (
 	}
 	claims := jwt.MapClaims{}
 	parser := jwt.NewParser(
-		jwt.WithAudience("weknora"),
+		jwt.WithAudience("teknowra"),
 		jwt.WithExpirationRequired(),
 		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
 	)

@@ -640,22 +640,28 @@ const loadProviders = async () => {
 
 // 根据当前模型类型过滤的 Provider 列表
 // API 返回的 defaultUrls/modelTypes 数据优先，但 label/description 使用 i18n
+// 上游的云服务，本产品未提供。留在列表里用户会去申请一个拿不到的凭证。
+// 隐藏点有三处（本处 / 解析引擎 / 设置页导航），少一处都能绕进去。
+const HIDDEN_PROVIDERS = new Set(['weknoracloud'])
+
 const providerOptions = computed(() => {
   // API 数据可用时，用 API 的结构数据 + i18n 的显示文本
   if (apiProviderOptions.value.length > 0) {
-    return apiProviderOptions.value.map(p => ({
-      ...p,
-      label: te(`model.editor.providers.${p.value}.label`)
-        ? t(`model.editor.providers.${p.value}.label`)
-        : p.label,
-      description: te(`model.editor.providers.${p.value}.description`)
-        ? t(`model.editor.providers.${p.value}.description`)
-        : p.description,
-    }))
+    return apiProviderOptions.value
+      .filter(p => !HIDDEN_PROVIDERS.has(p.value))
+      .map(p => ({
+        ...p,
+        label: te(`model.editor.providers.${p.value}.label`)
+          ? t(`model.editor.providers.${p.value}.label`)
+          : p.label,
+        description: te(`model.editor.providers.${p.value}.description`)
+          ? t(`model.editor.providers.${p.value}.description`)
+          : p.description,
+      }))
   }
   // 回退到硬编码值，按 modelTypes 过滤
   return fallbackProviderOptions.value.filter(p =>
-    p.modelTypes.includes(activeModelType.value)
+    !HIDDEN_PROVIDERS.has(p.value) && p.modelTypes.includes(activeModelType.value)
   )
 })
 

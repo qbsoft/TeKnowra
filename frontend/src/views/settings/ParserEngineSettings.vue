@@ -535,7 +535,9 @@ function openDrawer(engine: ParserEngineInfo) {
 async function loadEngines() {
   try {
     const res = await getParserEngines()
-    engines.value = res?.data ?? []
+    // weknoracloud 是上游的云服务，本产品未提供，过滤掉（另两处隐藏点见
+    // ModelEditorDialog 的 HIDDEN_PROVIDERS 与 Settings.vue 的导航项）
+    engines.value = (res?.data ?? []).filter((e: any) => e?.Name !== 'weknoracloud')
     docreaderAddrEnv.value = res?.docreader_addr ?? ''
     const transport = (res?.docreader_transport ?? 'grpc').toLowerCase()
     docreaderTransport.value = transport === 'http' ? 'http' : 'grpc'
