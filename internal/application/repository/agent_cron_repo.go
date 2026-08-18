@@ -243,6 +243,7 @@ func (r *AgentCronJobRepository) RecordResult(
 		updates := map[string]interface{}{
 			"last_status": res.Status,
 			"last_error":  res.Error,
+			"last_output": res.Output,
 			"last_run_at": res.RanAt,
 			"next_run_at": res.NextRunAt,
 			"updated_at":  time.Now(),

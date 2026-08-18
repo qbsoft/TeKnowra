@@ -56,6 +56,7 @@ type AgentCronJobRepository interface {
 type CronRunResult struct {
 	Status    string
 	Error     string
+	Output    string
 	RanAt     time.Time
 	NextRunAt *time.Time
 

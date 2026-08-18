@@ -31,19 +31,6 @@ const (
 	CronStatusInterrupted = "interrupted"
 )
 
-// CronDeliverTarget is the concrete IM destination of a job's output.
-//
-// It is resolved once, at creation time, from the conversation the user was in
-// when they asked for the job — never stored as "origin" and re-resolved when
-// the job fires. That is what keeps a job from ever reaching a chat other than
-// the one it was born in.
-type CronDeliverTarget struct {
-	Platform string `json:"platform"`
-	ChatID   string `json:"chat_id"`
-	UserID   string `json:"user_id"`
-	ThreadID string `json:"thread_id,omitempty"`
-}
-
 // CronPinnedModel is the provider/model snapshot taken when the job is created.
 //
 // Unattended jobs must not drift onto a different model because someone
@@ -76,8 +63,7 @@ type AgentCronJob struct {
 	Mode            string `json:"mode" gorm:"type:varchar(16)"`
 	EnabledToolsets JSON   `json:"enabled_toolsets" gorm:"type:jsonb"`
 
-	DeliverTarget JSON `json:"deliver_target" gorm:"type:jsonb"`
-	PinnedModel   JSON `json:"pinned_model"   gorm:"type:jsonb"`
+	PinnedModel JSON `json:"pinned_model" gorm:"type:jsonb"`
 
 	// nil means "run forever". Decremented only after a successful run — a
 	// string of transient failures must not silently exhaust a "run it 5
@@ -90,6 +76,12 @@ type AgentCronJob struct {
 	LastStatus string     `json:"last_status" gorm:"type:varchar(16)"`
 	LastError  string     `json:"last_error"`
 	LastRunAt  *time.Time `json:"last_run_at"`
+
+	// LastOutput is what the run produced, kept so the user has somewhere to
+	// read the result of a job that fired at 3am. The scheduler does not
+	// deliver anything anywhere — if a job should notify someone, that is the
+	// job's own work, done through whatever tool it calls.
+	LastOutput string `json:"last_output"`
 
 	// Consecutive failures; reset on success. The nudge fires once when this
 	// crosses the threshold rather than on every failed run.

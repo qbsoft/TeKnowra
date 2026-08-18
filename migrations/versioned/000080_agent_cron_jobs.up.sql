@@ -2,18 +2,14 @@
 --
 -- Users create these conversationally through the `cronjob` built-in tool:
 -- "every morning at 9, check which customers need a payment reminder".
--- The scheduler fires them, an asynq worker runs them, and the result is
--- pushed back to the IM conversation the job was created in.
+-- The scheduler fires them and an asynq worker runs them.
 --
--- Two columns deserve an explanation because they encode guardrails rather
--- than business data:
+-- The scheduler runs jobs; it does not deliver their output anywhere. If a job
+-- should notify someone, that is the job's own work, done through whatever
+-- tool it calls. What the scheduler owes the user is a readable record of what
+-- happened, which is last_output / last_status / last_error.
 --
---   deliver_target  The IM destination is resolved to a CONCRETE target at
---                   creation time, never stored as "origin" and resolved at
---                   fire time. A job can therefore only ever reach the chat
---                   its creator was in when they asked for it, even if the
---                   agent config or the creator's group membership changes
---                   later. This is the "only deliver to yourself" guardrail.
+-- One column encodes a guardrail rather than business data:
 --
 --   pinned_model    Provider/model snapshot taken at creation. If the global
 --                   default model changes afterwards the run fails closed and
@@ -37,7 +33,6 @@ CREATE TABLE IF NOT EXISTS agent_cron_jobs (
     mode               VARCHAR(16)  NOT NULL DEFAULT 'agent',
     enabled_toolsets   JSONB,
 
-    deliver_target     JSONB,
     pinned_model       JSONB,
 
     -- NULL = run forever. Decremented only on a SUCCESSFUL run, so a run of
@@ -49,6 +44,9 @@ CREATE TABLE IF NOT EXISTS agent_cron_jobs (
 
     last_status        VARCHAR(16),
     last_error         TEXT,
+    -- What the run produced. A job that fires at 3am needs somewhere its
+    -- result can be read afterwards.
+    last_output        TEXT,
     last_run_at        TIMESTAMPTZ,
     -- Consecutive failures. A review nudge is sent once when this crosses the
     -- threshold, instead of nagging on every failed run.
