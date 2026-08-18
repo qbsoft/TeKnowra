@@ -41,7 +41,11 @@ const (
 	QueueQuestion       = "question"
 	QueueSync           = "sync"
 	QueueMaintenance    = "low"
-	QueueWiki           = "wiki"
+	// QueueAgentCron carries user-scheduled agent tasks. Maintenance pool: a
+	// cron run can take minutes and must not pin capacity meant for the
+	// user-facing pipeline.
+	QueueAgentCron = "agent_cron"
+	QueueWiki      = "wiki"
 )
 
 // QueueDefinition is the single source of truth for queue topology. Worker
@@ -75,6 +79,7 @@ var queueDefinitions = []QueueDefinition{
 	{Name: QueueGraph, Pool: WorkerPoolEnrichment, Weight: 1, SharedWeight: 1, TaskTypes: []string{TypeChunkExtract}},
 	{Name: QueueQuestion, Pool: WorkerPoolEnrichment, Weight: 1, SharedWeight: 1, TaskTypes: []string{TypeQuestionGeneration}},
 	{Name: QueueSync, Pool: WorkerPoolMaintenance, Weight: 2, TaskTypes: []string{TypeDataSourceSync}},
+	{Name: QueueAgentCron, Pool: WorkerPoolMaintenance, Weight: 2, TaskTypes: []string{TypeAgentCronRun}},
 	{Name: QueueMaintenance, Pool: WorkerPoolMaintenance, Weight: 1, TaskTypes: []string{
 		TypeFAQImport, TypeKBClone, TypeIndexDelete, TypeKBDelete,
 		TypeKnowledgeListDelete, TypeKnowledgeListReparse, TypeKnowledgeMove,
@@ -246,6 +251,7 @@ const (
 	TypeWikiIngest               = "wiki:ingest"                // Wiki 页面同步任务
 	TypeWikiFinalize             = "wiki:finalize"              // Wiki KB 级收尾任务（防抖：索引重建/死链清理/交叉链接）
 	TypeTemporaryDocumentProcess = "temporary_document:process" // 会话临时文档解析任务
+	TypeAgentCronRun             = "agent_cron:run"             // 用户定义的定时 agent 任务
 )
 
 // ExtractChunkPayload represents the extract chunk task payload
@@ -521,4 +527,14 @@ type KBCloneProgress struct {
 	Error     string            `json:"error"`      // 错误信息
 	CreatedAt int64             `json:"created_at"` // 任务创建时间
 	UpdatedAt int64             `json:"updated_at"` // 最后更新时间
+}
+
+// AgentCronRunPayload is the asynq payload for one scheduled agent run.
+//
+// Deliberately only identifiers: the worker re-reads the job from the DB so a
+// task sitting in the queue cannot execute a prompt or a delivery target that
+// the user has since edited or deleted.
+type AgentCronRunPayload struct {
+	JobID    string `json:"job_id"`
+	TenantID uint64 `json:"tenant_id"`
 }
