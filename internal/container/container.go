@@ -311,6 +311,26 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(service.NewDataSourceService))
 	must(container.Invoke(startDataSourceScheduler))
 	logger.Debugf(ctx, "[Container] Data source sync framework registered")
+
+	// User-defined scheduled agent tasks. Off by default: it fires unattended
+	// work that costs tokens, so an operator has to ask for it. Requires the
+	// task queue, which in turn requires Redis.
+	logger.Debugf(ctx, "[Container] Registering agent cron framework...")
+	must(container.Provide(repository.NewAgentCronJobRepository))
+	if redisAvailable && agentCronEnabled() {
+		must(container.Provide(newAgentCronScheduler))
+		must(container.Provide(newAgentCronService))
+		must(container.Provide(newAgentCronRunner))
+		must(container.Invoke(startAgentCronScheduler))
+		logger.Debugf(ctx, "[Container] Agent cron framework registered")
+	} else {
+		// A nil manager is what makes the cronjob tool skip registration, so
+		// an agent that lists the tool degrades to "not available" rather
+		// than failing to start.
+		must(container.Provide(func() interfaces.AgentCronManager { return nil }))
+		must(container.Provide(func() *service.AgentCronRunner { return nil }))
+		logger.Debugf(ctx, "[Container] Agent cron disabled")
+	}
 	must(container.Invoke(startAuditLogRetention))
 	logger.Debugf(ctx, "[Container] Audit log retention runner registered")
 	must(container.Provide(service.NewHousekeepingService))
@@ -1695,6 +1715,66 @@ func startAuditLogRetention(
 	runner.Start(context.Background())
 	cleaner.RegisterWithName("AuditLogRetentionRunner", func() error {
 		runner.Stop()
+		return nil
+	})
+}
+
+// agentCronEnabled reports whether user-defined scheduled tasks are switched on.
+//
+// Default off: these run unattended and spend tokens, so switching them on has
+// to be a deliberate act by whoever pays the bill.
+func agentCronEnabled() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("WEKNORA_AGENT_CRON_ENABLED")), "true")
+}
+
+func newAgentCronScheduler(
+	repo interfaces.AgentCronJobRepository,
+	enqueuer interfaces.TaskEnqueuer,
+) *service.AgentCronScheduler {
+	return service.NewAgentCronScheduler(repo, enqueuer, instanceIdentity())
+}
+
+func newAgentCronService(
+	repo interfaces.AgentCronJobRepository,
+	scheduler *service.AgentCronScheduler,
+) interfaces.AgentCronManager {
+	return service.NewAgentCronService(repo, scheduler,
+		envInt("WEKNORA_AGENT_CRON_MAX_PER_USER", 0),
+		envInt("WEKNORA_AGENT_CRON_MAX_PER_TENANT", 0))
+}
+
+func newAgentCronRunner(repo interfaces.AgentCronJobRepository) *service.AgentCronRunner {
+	return service.NewAgentCronRunner(repo, instanceIdentity(),
+		envInt("WEKNORA_AGENT_CRON_FAILURE_NUDGE", 0))
+}
+
+// instanceIdentity names this replica in running claims so a wedged job says
+// which instance dropped it.
+func instanceIdentity() string {
+	if h, err := os.Hostname(); err == nil && h != "" {
+		return h
+	}
+	return "unknown"
+}
+
+func envInt(key string, fallback int) int {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return fallback
+}
+
+// startAgentCronScheduler loads existing jobs and begins firing them.
+// Best-effort, like the other schedulers: a failure here must not take the
+// whole backend down.
+func startAgentCronScheduler(scheduler *service.AgentCronScheduler, cleaner interfaces.ResourceCleaner) {
+	if err := scheduler.Start(context.Background()); err != nil {
+		logger.Warnf(context.Background(), "[Container] agent cron scheduler start failed: %v", err)
+	}
+	cleaner.RegisterWithName("AgentCronScheduler", func() error {
+		scheduler.Stop()
 		return nil
 	})
 }

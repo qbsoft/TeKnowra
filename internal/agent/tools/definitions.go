@@ -8,6 +8,7 @@ const maxFunctionNameLength = 64
 const (
 	ToolThinking            = "thinking"
 	ToolTodoWrite           = "todo_write"
+	ToolCronjob             = "cronjob"
 	ToolGrepChunks          = "grep_chunks"
 	ToolKnowledgeSearch     = "knowledge_search"
 	ToolListKnowledgeChunks = "list_knowledge_chunks"

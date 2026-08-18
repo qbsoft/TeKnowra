@@ -44,8 +44,10 @@ type AsynqTaskParams struct {
 	KnowledgePostProcess interfaces.TaskHandler `name:"knowledgePostProcess"`
 	WikiIngest           interfaces.TaskHandler `name:"wikiIngest"`
 	TemporaryDocument    interfaces.TemporaryDocumentService
-	DeadLetterRepo       interfaces.TaskDeadLetterRepository
-	SpanTracker          service.SpanTracker
+	// AgentCronRunner is nil when scheduled tasks are switched off.
+	AgentCronRunner *service.AgentCronRunner
+	DeadLetterRepo  interfaces.TaskDeadLetterRepository
+	SpanTracker     service.SpanTracker
 }
 
 // defaultRedisOpTimeout is the previous hard-coded read timeout. The 100ms
@@ -303,6 +305,12 @@ func RunAsynqServer(params AsynqTaskParams) *asynq.ServeMux {
 
 	// Register data source sync handler
 	mux.HandleFunc(types.TypeDataSourceSync, params.DataSourceService.ProcessSync)
+
+	// Register the scheduled-agent-task handler only when the feature is on;
+	// registering a nil handler would panic the worker on the first task.
+	if params.AgentCronRunner != nil {
+		mux.HandleFunc(types.TypeAgentCronRun, params.AgentCronRunner.Handle)
+	}
 
 	// Register wiki ingest handler + the debounced KB-global finalize handler.
 	// Both route to the same dispatch (WikiIngest.Handle switches on task type)

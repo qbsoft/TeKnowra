@@ -65,3 +65,36 @@ type CronRunResult struct {
 	// user's "run it 5 times".
 	Success bool
 }
+
+// CreateJobInput is what the cronjob tool collected from the conversation.
+type CreateJobInput struct {
+	Schedule string
+	Prompt   string
+	Name     string
+	Mode     string
+	Repeat   int
+	AgentID  string
+}
+
+// UpdateJobInput carries only the fields a user may change. Empty means "leave
+// it alone", so the model does not have to restate the whole job to adjust one
+// thing.
+type UpdateJobInput struct {
+	Schedule string
+	Prompt   string
+	Name     string
+}
+
+// AgentCronManager is the surface the cronjob tool drives.
+//
+// It lives here rather than in the service package because the tool cannot
+// import the service (the service registers the tools), and because a narrow
+// interface is what a tool should depend on anyway.
+type AgentCronManager interface {
+	Create(ctx context.Context, in CreateJobInput) (*types.AgentCronJob, error)
+	List(ctx context.Context) ([]*types.AgentCronJob, error)
+	Update(ctx context.Context, id string, in UpdateJobInput) (*types.AgentCronJob, error)
+	SetPaused(ctx context.Context, id string, paused bool) (*types.AgentCronJob, error)
+	RunNow(ctx context.Context, id string) (*types.AgentCronJob, error)
+	Remove(ctx context.Context, id string) (*types.AgentCronJob, error)
+}

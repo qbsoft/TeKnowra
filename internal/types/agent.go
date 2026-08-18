@@ -53,6 +53,10 @@ type AgentConfig struct {
 
 	// Runtime-only fields (not persisted)
 	VLMModelID string `json:"-"` // VLM model ID for tool result image analysis (set from CustomAgent config)
+	// AgentID identifies which agent this run belongs to. Runtime-only, set
+	// from CustomAgent. A scheduled job records it so a later run knows which
+	// agent to execute as.
+	AgentID string `json:"-"`
 	// Per-request @mention pins (runtime only; injected as <must_use> in the user message).
 	PinnedMCPServiceIDs []string `json:"-"`
 	PinnedSkillNames    []string `json:"-"`

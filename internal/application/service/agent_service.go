@@ -103,6 +103,7 @@ type agentService struct {
 	tenantService         interfaces.TenantService
 	storageResolver       interfaces.StorageBackendResolver
 	toolApprovalGate      approval.MCPApproval
+	agentCronManager      interfaces.AgentCronManager
 }
 
 // NewAgentService creates a new agent service
@@ -124,6 +125,7 @@ func NewAgentService(
 	tenantService interfaces.TenantService,
 	storageResolver interfaces.StorageBackendResolver,
 	toolApprovalGate approval.MCPApproval,
+	agentCronManager interfaces.AgentCronManager,
 ) interfaces.AgentService {
 	return &agentService{
 		cfg:                   cfg,
@@ -143,6 +145,7 @@ func NewAgentService(
 		tenantService:         tenantService,
 		storageResolver:       storageResolver,
 		toolApprovalGate:      toolApprovalGate,
+		agentCronManager:      agentCronManager,
 	}
 }
 
@@ -593,6 +596,14 @@ func (s *agentService) registerTools(
 			toolToRegister = tools.NewSequentialThinkingTool()
 		case tools.ToolTodoWrite:
 			toolToRegister = tools.NewTodoWriteTool()
+		case tools.ToolCronjob:
+			// Opt-in only: this tool spends tokens on a timer, so it is not in
+			// DefaultAllowedTools and an agent must ask for it explicitly.
+			if s.agentCronManager == nil {
+				logger.Warnf(ctx, "cronjob tool requested but scheduling is disabled; skipping")
+				continue
+			}
+			toolToRegister = tools.NewCronjobTool(s.agentCronManager, config.AgentID)
 		case tools.ToolKnowledgeSearch:
 			toolToRegister = tools.NewKnowledgeSearchTool(
 				s.knowledgeBaseService,
