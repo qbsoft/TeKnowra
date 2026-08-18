@@ -42,11 +42,11 @@ CREATE TABLE IF NOT EXISTS agent_cron_jobs (
     enabled            BOOLEAN      NOT NULL DEFAULT TRUE,
     paused             BOOLEAN      NOT NULL DEFAULT FALSE,
 
-    last_status        VARCHAR(16),
-    last_error         TEXT,
+    last_status        VARCHAR(16)  NOT NULL DEFAULT '',
+    last_error         TEXT         NOT NULL DEFAULT '',
     -- What the run produced. A job that fires at 3am needs somewhere its
     -- result can be read afterwards.
-    last_output        TEXT,
+    last_output        TEXT         NOT NULL DEFAULT '',
     last_run_at        TIMESTAMPTZ,
     -- Consecutive failures. A review nudge is sent once when this crosses the
     -- threshold, instead of nagging on every failed run.
@@ -54,7 +54,10 @@ CREATE TABLE IF NOT EXISTS agent_cron_jobs (
 
     -- Set by the worker when it starts, cleared when it finishes. Prevents a
     -- slow job from overlapping itself. A sweeper force-clears stale claims.
-    running_claim_by   VARCHAR(128),
+    -- NOT NULL with an empty default on purpose: the claim is taken and
+    -- released with `running_claim_by = ''` predicates, and NULL would never
+    -- match them — the guard would silently never engage.
+    running_claim_by   VARCHAR(128) NOT NULL DEFAULT '',
     running_claim_at   TIMESTAMPTZ,
 
     created_at         TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
