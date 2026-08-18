@@ -1743,9 +1743,18 @@ func newAgentCronService(
 		envInt("WEKNORA_AGENT_CRON_MAX_PER_TENANT", 0))
 }
 
-func newAgentCronRunner(repo interfaces.AgentCronJobRepository) *service.AgentCronRunner {
+func newAgentCronRunner(
+	repo interfaces.AgentCronJobRepository,
+	sessions interfaces.SessionService,
+	messages interfaces.MessageService,
+	agents interfaces.CustomAgentService,
+) *service.AgentCronRunner {
+	// Agent execution is attached rather than required: a runner that can only
+	// do scripted jobs is still useful, and a missing dependency should
+	// degrade the feature instead of stopping the backend from starting.
 	return service.NewAgentCronRunner(repo, instanceIdentity(),
-		envInt("WEKNORA_AGENT_CRON_FAILURE_NUDGE", 0))
+		envInt("WEKNORA_AGENT_CRON_FAILURE_NUDGE", 0)).
+		WithAgentExecution(sessions, messages, agents)
 }
 
 // instanceIdentity names this replica in running claims so a wedged job says
