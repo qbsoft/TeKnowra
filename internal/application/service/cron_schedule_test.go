@@ -1,6 +1,7 @@
 package service
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -113,5 +114,62 @@ func TestNextAfter_Recurring(t *testing.T) {
 	}
 	if want := mustTime(t, "2026-08-17T09:00:00Z"); !next.Equal(want) {
 		t.Errorf("next = %v, want %v", next, want)
+	}
+}
+
+// Intervals must land on absolute wall-clock times wherever that is possible.
+//
+// robfig schedules "@every" from the moment of registration, so two replicas
+// that started minutes apart fire at different minutes, derive different dedup
+// keys, and both run — defeating the scheduler's de-duplication. Converting to
+// a cron expression removes the whole class of problem.
+func TestParseSchedule_IntervalsBecomeAbsolute(t *testing.T) {
+	now := mustTime(t, "2026-08-16T10:03:00Z")
+
+	cases := []struct {
+		in       string
+		wantExpr string
+		wantNext string
+	}{
+		{"every 5m", "0 */5 * * * *", "2026-08-16T10:05:00Z"},
+		{"every 10m", "0 */10 * * * *", "2026-08-16T10:10:00Z"},
+		{"every 30m", "0 */30 * * * *", "2026-08-16T10:30:00Z"},
+		{"every 1h", "0 0 */1 * * *", "2026-08-16T11:00:00Z"},
+		{"every 6h", "0 0 */6 * * *", "2026-08-16T12:00:00Z"},
+		{"every 24h", "0 0 0 * * *", "2026-08-17T00:00:00Z"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.in, func(t *testing.T) {
+			got, err := ParseSchedule(c.in, now)
+			if err != nil {
+				t.Fatalf("ParseSchedule(%q): %v", c.in, err)
+			}
+			if got.Expr != c.wantExpr {
+				t.Errorf("expr = %q, want %q", got.Expr, c.wantExpr)
+			}
+			if want := mustTime(t, c.wantNext); !got.Next.Equal(want) {
+				t.Errorf("next = %v, want %v (aligned to the clock, not to now)", got.Next, want)
+			}
+		})
+	}
+}
+
+// An interval that does not divide the hour cannot be expressed on the clock.
+// Rewriting it anyway would change when the job runs, so it keeps the relative
+// form and gives up absolute alignment.
+func TestParseSchedule_IndivisibleIntervalStaysRelative(t *testing.T) {
+	now := mustTime(t, "2026-08-16T10:03:00Z")
+
+	for _, in := range []string{"every 7m", "every 90s", "every 5h"} {
+		t.Run(in, func(t *testing.T) {
+			got, err := ParseSchedule(in, now)
+			if err != nil {
+				t.Skipf("%q is rejected for another reason: %v", in, err)
+			}
+			if !strings.HasPrefix(got.Expr, "@every") {
+				t.Errorf("expr = %q, want the relative form", got.Expr)
+			}
+		})
 	}
 }

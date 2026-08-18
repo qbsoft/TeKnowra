@@ -97,6 +97,19 @@ func (r *AgentCronRunner) Handle(ctx context.Context, task *asynq.Task) error {
 		return nil
 	}
 
+	// Everything downstream — message creation, session lookup, retrieval —
+	// reads the caller's identity off the context. A queue worker has no
+	// request to inherit it from, so the job's own owner is put back on the
+	// context here, once, rather than threading it through every call.
+	//
+	// Missing it is not a graceful degradation: MustTenantIDFromContext
+	// panics, which surfaces as a task that dies with a stack trace and no
+	// row update at all.
+	ctx = context.WithValue(ctx, types.TenantIDContextKey, job.TenantID)
+	if job.CreatorUserID != "" {
+		ctx = context.WithValue(ctx, types.UserIDContextKey, job.CreatorUserID)
+	}
+
 	// The authoritative overlap guard. The scheduler's check is a cheap
 	// read; this is the atomic one, and it is what makes two workers racing
 	// the same task safe.

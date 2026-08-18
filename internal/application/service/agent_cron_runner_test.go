@@ -296,3 +296,47 @@ func TestRunner_TruncatesHugeOutput(t *testing.T) {
 		t.Errorf("output of %d chars was not marked as truncated", len(out))
 	}
 }
+
+// identityProbe records the context its executor was handed.
+//
+// This exists because the fakes in the other tests ignore the context
+// entirely, which is exactly how a missing tenant id survived every unit test
+// and only surfaced as a panic on a live worker: the real MessageService calls
+// MustTenantIDFromContext, which panics rather than degrading.
+type identityProbe struct {
+	tenantID uint64
+	tenantOK bool
+	userID   string
+}
+
+func (p *identityProbe) Execute(ctx context.Context, _ *types.AgentCronJob) (string, error) {
+	p.tenantID, p.tenantOK = types.TenantIDFromContext(ctx)
+	p.userID, _ = types.UserIDFromContext(ctx)
+	return "ok", nil
+}
+
+func TestRunner_PutsJobOwnerOnTheContext(t *testing.T) {
+	job := testJob()
+	job.Mode = types.CronModeAgent
+	job.CreatorUserID = "u-42"
+
+	repo := newRecordingRepo(job)
+	runner := NewAgentCronRunner(repo, "replica-a", 3)
+
+	probe := &identityProbe{}
+	runner.executors[types.CronModeAgent] = probe
+
+	if err := runTask(t, runner, job); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	if !probe.tenantOK {
+		t.Fatal("the executor got a context with no tenant — the real MessageService would panic here")
+	}
+	if probe.tenantID != job.TenantID {
+		t.Errorf("tenant = %d, want %d", probe.tenantID, job.TenantID)
+	}
+	if probe.userID != job.CreatorUserID {
+		t.Errorf("user = %q, want %q", probe.userID, job.CreatorUserID)
+	}
+}

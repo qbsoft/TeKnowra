@@ -60,6 +60,27 @@ func ParseSchedule(raw string, now time.Time) (*ParsedSchedule, error) {
 		if d < MinCronInterval {
 			return nil, fmt.Errorf("间隔太短了，最快只能每 %v 一次", MinCronInterval)
 		}
+		// Prefer an absolute wall-clock expression over "@every".
+		//
+		// robfig schedules "@every" relative to the moment it was REGISTERED,
+		// not to the clock. Two replicas that started minutes apart therefore
+		// fire at different minutes, derive different dedup keys, and both
+		// run — which is precisely what the scheduler's TaskID de-duplication
+		// is supposed to prevent. A restart also silently shifts the phase,
+		// so the stored next_run_at stops matching reality.
+		//
+		// Intervals that divide the hour (or the day) convert cleanly and get
+		// absolute semantics for free.
+		if expr, ok := intervalAsCron(d); ok {
+			sched, err := cronParser.Parse(expr)
+			if err == nil {
+				return &ParsedSchedule{
+					Kind: types.CronScheduleInterval,
+					Expr: expr,
+					Next: sched.Next(now),
+				}, nil
+			}
+		}
 		return &ParsedSchedule{
 			Kind: types.CronScheduleInterval,
 			Expr: fmt.Sprintf("@every %s", d),
@@ -128,4 +149,36 @@ func NextAfter(kind, expr string, after time.Time) (time.Time, error) {
 		return time.Time{}, err
 	}
 	return sched.Next(after), nil
+}
+
+// intervalAsCron converts an interval into an equivalent wall-clock cron
+// expression when one exists.
+//
+// Only exact divisors qualify: "every 10m" is the same thing as "at :00, :10,
+// :20 …", but "every 7m" is not expressible, and pretending otherwise would
+// change when the job runs. Those keep the relative form and lose absolute
+// alignment across replicas — Layer 1 (the running claim) still prevents two
+// copies overlapping, so the cost is a possible duplicate run rather than a
+// stampede.
+func intervalAsCron(d time.Duration) (string, bool) {
+	if d%time.Minute != 0 {
+		return "", false
+	}
+	if mins := int(d / time.Minute); mins < 60 {
+		if 60%mins != 0 {
+			return "", false
+		}
+		return fmt.Sprintf("0 */%d * * * *", mins), true
+	}
+	if d%time.Hour != 0 {
+		return "", false
+	}
+	hours := int(d / time.Hour)
+	if hours > 24 || 24%hours != 0 {
+		return "", false
+	}
+	if hours == 24 {
+		return "0 0 0 * * *", true
+	}
+	return fmt.Sprintf("0 0 */%d * * *", hours), true
 }
