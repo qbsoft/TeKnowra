@@ -20,6 +20,10 @@ CREATE TABLE IF NOT EXISTS agent_cron_jobs (
     tenant_id          BIGINT       NOT NULL,
     creator_user_id    VARCHAR(64)  NOT NULL,
     agent_id           VARCHAR(36)  NOT NULL,
+    -- The session each run appends to. Must be stored rather than derived
+    -- from the job id: types.Session has a BeforeCreate hook that overwrites
+    -- any id handed to it, so a job cannot pick its own session id.
+    session_id         VARCHAR(36)  NOT NULL DEFAULT '',
 
     name               VARCHAR(200) NOT NULL DEFAULT '',
     -- once | interval | cron

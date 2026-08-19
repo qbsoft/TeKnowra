@@ -1755,7 +1755,7 @@ func newAgentCronRunner(
 	// degrade the feature instead of stopping the backend from starting.
 	return service.NewAgentCronRunner(repo, instanceIdentity(),
 		envInt("WEKNORA_AGENT_CRON_FAILURE_NUDGE", 0)).
-		WithAgentExecution(sessions, messages, agents)
+		WithAgentExecution(sessions, messages, agents, repo)
 }
 
 // instanceIdentity names this replica in running claims so a wedged job says

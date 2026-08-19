@@ -47,6 +47,11 @@ type AgentCronJobRepository interface {
 	// stuck forever. Returns the ids it freed so the caller can log them.
 	SweepStaleClaims(ctx context.Context, olderThan time.Time) ([]string, error)
 
+	// BindSession records which conversation a job's runs append to. Called
+	// once, the first time the job runs, because the session id is only
+	// knowable after the session has been created.
+	BindSession(ctx context.Context, id, sessionID string) error
+
 	// RecordResult writes the outcome of a run: status, error, failure streak,
 	// repeat budget, and the next fire time.
 	RecordResult(ctx context.Context, id string, res CronRunResult) error

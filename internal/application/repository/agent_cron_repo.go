@@ -230,6 +230,14 @@ func (r *AgentCronJobRepository) SweepStaleClaims(
 	return ids, err
 }
 
+// BindSession records which conversation a job's runs append to.
+func (r *AgentCronJobRepository) BindSession(ctx context.Context, id, sessionID string) error {
+	return r.db.WithContext(ctx).
+		Model(&types.AgentCronJob{}).
+		Where("id = ?", id).
+		Update("session_id", sessionID).Error
+}
+
 // RecordResult writes the outcome of a run.
 func (r *AgentCronJobRepository) RecordResult(
 	ctx context.Context, id string, res interfaces.CronRunResult,

@@ -53,6 +53,14 @@ type AgentCronJob struct {
 	// Which agent runs it.
 	AgentID string `json:"agent_id" gorm:"type:varchar(36)"`
 
+	// SessionID is the conversation every run appends to, so a job reads as
+	// one thread instead of littering the sidebar with a session per run.
+	//
+	// Stored rather than derived from the job id: types.Session.BeforeCreate
+	// overwrites whatever id it is given, so the session id can only be
+	// learned after the fact.
+	SessionID string `json:"session_id" gorm:"type:varchar(36)"`
+
 	Name string `json:"name"`
 
 	ScheduleKind string     `json:"schedule_kind" gorm:"type:varchar(16)"`

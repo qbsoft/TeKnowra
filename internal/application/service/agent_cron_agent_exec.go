@@ -34,6 +34,7 @@ type agentExecutor struct {
 	sessions interfaces.SessionService
 	messages interfaces.MessageService
 	agents   interfaces.CustomAgentService
+	repo     interfaces.AgentCronJobRepository
 }
 
 func (e *agentExecutor) Execute(ctx context.Context, job *types.AgentCronJob) (string, error) {
@@ -111,10 +112,14 @@ func (e *agentExecutor) Execute(ctx context.Context, job *types.AgentCronJob) (s
 // setting, deliberately not overridden here: a scheduled run should behave
 // like the same agent does interactively.
 func (e *agentExecutor) ensureSession(ctx context.Context, job *types.AgentCronJob) (*types.Session, error) {
-	// The job id doubles as the session id — both are UUIDs, and it makes the
-	// mapping obvious without another column to keep in sync.
-	if existing, err := e.sessions.GetSessionByID(ctx, job.TenantID, job.ID); err == nil && existing != nil {
-		return existing, nil
+	// Reuse the session this job was bound to on its first run, so the whole
+	// history reads as one thread.
+	if job.SessionID != "" {
+		if existing, err := e.sessions.GetSessionByID(ctx, job.TenantID, job.SessionID); err == nil && existing != nil {
+			return existing, nil
+		}
+		// Bound to a session that no longer exists (the user deleted it).
+		// Fall through and make a new one rather than failing the run.
 	}
 
 	title := job.Name
@@ -122,7 +127,6 @@ func (e *agentExecutor) ensureSession(ctx context.Context, job *types.AgentCronJ
 		title = "定时任务"
 	}
 	session, err := e.sessions.CreateSession(ctx, &types.Session{
-		ID:          job.ID,
 		Title:       title,
 		Description: "定时任务的执行记录",
 		TenantID:    job.TenantID,
@@ -131,6 +135,16 @@ func (e *agentExecutor) ensureSession(ctx context.Context, job *types.AgentCronJ
 	if err != nil {
 		return nil, fmt.Errorf("创建任务会话失败：%w", err)
 	}
+
+	// The id is only knowable now — Session.BeforeCreate overwrites whatever
+	// it is handed — so bind it to the job before the next run comes round.
+	// Failing to persist it is not fatal to this run, but every later run
+	// would start another session, so it is worth shouting about.
+	if err := e.repo.BindSession(ctx, job.ID, session.ID); err != nil {
+		logger.Errorf(ctx, "[AgentCron] job=%s could not remember its session %s: %v; "+
+			"每次执行都会另起一个会话", job.ID, session.ID, err)
+	}
+	job.SessionID = session.ID
 	return session, nil
 }
 
@@ -207,11 +221,12 @@ func newAgentExecutor(
 	sessions interfaces.SessionService,
 	messages interfaces.MessageService,
 	agents interfaces.CustomAgentService,
+	repo interfaces.AgentCronJobRepository,
 ) (cronExecutor, error) {
-	if sessions == nil || messages == nil || agents == nil {
-		return nil, errors.New("agent execution requires session, message and agent services")
+	if sessions == nil || messages == nil || agents == nil || repo == nil {
+		return nil, errors.New("agent execution requires session, message, agent services and the job repository")
 	}
-	return &agentExecutor{sessions: sessions, messages: messages, agents: agents}, nil
+	return &agentExecutor{sessions: sessions, messages: messages, agents: agents, repo: repo}, nil
 }
 
 // WithAgentExecution enables the agent mode on a runner.
@@ -223,8 +238,9 @@ func (r *AgentCronRunner) WithAgentExecution(
 	sessions interfaces.SessionService,
 	messages interfaces.MessageService,
 	agents interfaces.CustomAgentService,
+	repo interfaces.AgentCronJobRepository,
 ) *AgentCronRunner {
-	exec, err := newAgentExecutor(sessions, messages, agents)
+	exec, err := newAgentExecutor(sessions, messages, agents, repo)
 	if err != nil {
 		logger.Warnf(context.Background(), "[AgentCron] agent execution unavailable: %v", err)
 		return r

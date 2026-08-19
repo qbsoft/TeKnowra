@@ -89,6 +89,8 @@ func (r *fakeCronRepo) ReleaseClaim(context.Context, string) error             {
 func (r *fakeCronRepo) SweepStaleClaims(context.Context, time.Time) ([]string, error) {
 	return nil, nil
 }
+func (r *fakeCronRepo) BindSession(context.Context, string, string) error { return nil }
+
 func (r *fakeCronRepo) RecordResult(context.Context, string, interfaces.CronRunResult) error {
 	return nil
 }
