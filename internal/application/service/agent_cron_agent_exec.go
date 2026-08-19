@@ -90,6 +90,16 @@ func (e *agentExecutor) Execute(ctx context.Context, job *types.AgentCronJob) (s
 	}
 
 	answer, err := e.runAndCollect(ctx, session, agent, job.Prompt, assistantMsg.ID, userMsg.ID)
+
+	// Close out the assistant message, whatever happened.
+	//
+	// Interactively this is the SSE handler's job (see
+	// handler/session/agent_stream_handler.go), and that handler never runs for
+	// a scheduled turn. Left undone, the message stays is_completed = false
+	// forever: opening the session makes the UI try to attach to a stream that
+	// finished hours ago, and it answers HTTP 404.
+	e.finishMessage(ctx, assistantMsg, answer, err)
+
 	if err != nil {
 		return answer, err
 	}
@@ -99,6 +109,36 @@ func (e *agentExecutor) Execute(ctx context.Context, job *types.AgentCronJob) (s
 		return "", nil
 	}
 	return answer, nil
+}
+
+// finishMessage marks the assistant turn done and stores what it produced.
+//
+// Best-effort: the run itself already succeeded or failed on its own terms, and
+// failing to tidy the transcript must not turn a good run into a bad one. It is
+// logged loudly because the symptom otherwise shows up much later, as a session
+// that will not open.
+func (e *agentExecutor) finishMessage(
+	ctx context.Context, msg *types.Message, answer string, runErr error,
+) {
+	// The run may have been cancelled; the tidy-up still has to happen.
+	ctx = context.WithoutCancel(ctx)
+
+	msg.IsCompleted = true
+	if strings.TrimSpace(msg.Content) == "" {
+		switch {
+		case runErr != nil:
+			msg.Content = fmt.Sprintf("（本次定时执行失败：%v）", runErr)
+		case strings.TrimSpace(answer) != "":
+			msg.Content = answer
+		default:
+			msg.Content = "（本次执行没有产出内容）"
+		}
+	}
+
+	if err := e.messages.UpdateMessage(ctx, msg); err != nil {
+		logger.Errorf(ctx, "[AgentCron] could not close out message %s: %v; "+
+			"这条消息会一直停在未完成状态，打开会话时前端会报流式连接失败", msg.ID, err)
+	}
 }
 
 // ensureSession returns the job's own conversation, creating it on first run.
