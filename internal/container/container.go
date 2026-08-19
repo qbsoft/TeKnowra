@@ -317,6 +317,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	// task queue, which in turn requires Redis.
 	logger.Debugf(ctx, "[Container] Registering agent cron framework...")
 	must(container.Provide(repository.NewAgentCronJobRepository))
+	must(container.Provide(handler.NewAgentCronHandler))
 	if redisAvailable && agentCronEnabled() {
 		must(container.Provide(newAgentCronScheduler))
 		must(container.Provide(newAgentCronService))
