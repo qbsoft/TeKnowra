@@ -94,6 +94,7 @@ func (s *AgentCronService) Create(ctx context.Context, in interfaces.CreateJobIn
 		TenantID:      tenantID,
 		CreatorUserID: userID,
 		AgentID:       in.AgentID,
+		SessionID:     in.SessionID,
 		Name:          name,
 		ScheduleKind:  sched.Kind,
 		ScheduleExpr:  sched.Expr,

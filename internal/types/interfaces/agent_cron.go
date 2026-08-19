@@ -79,6 +79,11 @@ type CreateJobInput struct {
 	Mode     string
 	Repeat   int
 	AgentID  string
+
+	// SessionID is the conversation the job was asked for in. Runs append to
+	// it, so "remind me every morning" shows up where the person asked rather
+	// than in a thread they never opened.
+	SessionID string
 }
 
 // UpdateJobInput carries only the fields a user may change. Empty means "leave

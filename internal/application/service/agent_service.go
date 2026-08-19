@@ -603,7 +603,7 @@ func (s *agentService) registerTools(
 				logger.Warnf(ctx, "cronjob tool requested but scheduling is disabled; skipping")
 				continue
 			}
-			toolToRegister = tools.NewCronjobTool(s.agentCronManager, config.AgentID)
+			toolToRegister = tools.NewCronjobTool(s.agentCronManager, config.AgentID, sessionID)
 		case tools.ToolKnowledgeSearch:
 			toolToRegister = tools.NewKnowledgeSearchTool(
 				s.knowledgeBaseService,

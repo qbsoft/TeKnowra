@@ -50,7 +50,15 @@ var cronjobTool = BaseTool{
 它会在一个全新会话里执行，看不到现在这段对话，所以别写「照上面说的做」。
 
 ## 用户要确认的事
-新建之后把「什么时间、做什么、下次什么时候跑」复述给用户，让他能当场纠正。`,
+新建之后把「什么时间、做什么、下次什么时候跑」复述给用户，让他能当场纠正。
+
+## 结果去哪儿 —— 必须如实说
+执行结果作为新消息追加到**任务创建时所在的那个会话**里。
+**没有主动推送**：不弹窗、不发手机、不发邮件。用户不打开会话就不会被打扰，
+反过来说也就不会"被提醒"。
+
+用户说「提醒我」时要让他知道这点，别让他等到时间过了才发现没人叫他。
+**不要把这解释成"为了避免干扰"的设计**——事实是当前还不支持主动推送。`,
 	schema: json.RawMessage(`{
 		"type": "object",
 		"properties": {
@@ -90,11 +98,14 @@ type CronjobTool struct {
 	manager interfaces.AgentCronManager
 	// agentID records which agent a new job should run as.
 	agentID string
+	// sessionID is the conversation this tool call happened in; new jobs
+	// append their runs to it.
+	sessionID string
 }
 
 // NewCronjobTool creates the cronjob tool.
-func NewCronjobTool(manager interfaces.AgentCronManager, agentID string) *CronjobTool {
-	return &CronjobTool{BaseTool: cronjobTool, manager: manager, agentID: agentID}
+func NewCronjobTool(manager interfaces.AgentCronManager, agentID, sessionID string) *CronjobTool {
+	return &CronjobTool{BaseTool: cronjobTool, manager: manager, agentID: agentID, sessionID: sessionID}
 }
 
 type cronjobInput struct {
@@ -122,18 +133,27 @@ func (t *CronjobTool) Execute(ctx context.Context, args json.RawMessage) (*types
 	switch in.Action {
 	case "create":
 		job, err := t.manager.Create(ctx, interfaces.CreateJobInput{
-			Schedule: in.Schedule,
-			Prompt:   in.Prompt,
-			Name:     in.Name,
-			Repeat:   in.Repeat,
-			AgentID:  t.agentID,
+			Schedule:  in.Schedule,
+			Prompt:    in.Prompt,
+			Name:      in.Name,
+			Repeat:    in.Repeat,
+			AgentID:   t.agentID,
+			SessionID: t.sessionID,
 		})
 		if err != nil {
 			// The service writes its errors for the end user, so pass them
 			// through rather than wrapping them in tool-speak.
 			return failure(err.Error()), nil
 		}
-		return success(fmt.Sprintf("定时任务「%s」建好了。%s\n任务 ID：%s",
+		// Say where the output will land, at creation time.
+		//
+		// Without this the person waits for a reminder that never pops up, then
+		// has to ask twice to find out it was only ever written to a log. That
+		// gap belongs at the moment of creation, not ten minutes later.
+		return success(fmt.Sprintf(
+			"定时任务「%s」建好了。%s\n"+
+				"执行结果会作为新消息出现在**当前这个会话**里，不会弹窗、也不会推送到手机或邮箱；"+
+				"随时可以说「看看我的定时任务」查历史。\n任务 ID：%s",
 			job.Name, describeSchedule(job), job.ID), jobData(job)), nil
 
 	case "list":
