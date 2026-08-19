@@ -29,6 +29,9 @@ logs/
 *.pid
 
 WeKnora
+# Windows 上 `go build ./cmd/...` 产出 <pkg>.exe，与上游 Linux 下的产物名不同，
+# 上游规则覆盖不到。仓库里没有任何该被跟踪的 .exe。
+*.exe
 WeKnora-lite
 cmd/desktop/build/bin/
 /models/
