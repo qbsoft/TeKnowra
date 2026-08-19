@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -50,6 +51,7 @@ func (e *agentExecutor) Execute(ctx context.Context, job *types.AgentCronJob) (s
 	if agent == nil {
 		return "", errors.New("这个任务绑定的 agent 已经不存在了")
 	}
+	agent = withoutSelfScheduling(agent)
 
 	session, err := e.ensureSession(ctx, job)
 	if err != nil {
@@ -229,4 +231,39 @@ func (r *AgentCronRunner) WithAgentExecution(
 	}
 	r.executors[types.CronModeAgent] = exec
 	return r
+}
+
+// withoutSelfScheduling returns a copy of the agent with the cronjob tool
+// removed.
+//
+// A scheduled run must not be able to schedule more runs. Without this, one
+// job whose prompt drifts into "and set this up to repeat" spawns two, then
+// four — an exponential fan-out that nothing downstream would stop, because
+// each individual job looks perfectly legitimate. hermes-agent disables its
+// cron toolset inside cron runs for the same reason.
+//
+// The copy matters: the agent came from a service that may cache or share it,
+// so stripping the tool in place would quietly disable scheduling for the
+// interactive users of that same agent.
+func withoutSelfScheduling(agent *types.CustomAgent) *types.CustomAgent {
+	allowed := agent.Config.AllowedTools
+	idx := -1
+	for i, name := range allowed {
+		if name == tools.ToolCronjob {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return agent
+	}
+
+	trimmed := make([]string, 0, len(allowed)-1)
+	trimmed = append(trimmed, allowed[:idx]...)
+	trimmed = append(trimmed, allowed[idx+1:]...)
+
+	clone := *agent
+	clone.Config = agent.Config
+	clone.Config.AllowedTools = trimmed
+	return &clone
 }
