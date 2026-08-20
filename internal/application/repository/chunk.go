@@ -42,6 +42,7 @@ func NewChunkRepository(db *gorm.DB) interfaces.ChunkRepository {
 func (r *chunkRepository) CreateChunks(ctx context.Context, chunks []*types.Chunk) error {
 	for _, chunk := range chunks {
 		chunk.Content = common.CleanInvalidUTF8(chunk.Content)
+		chunk.ContextHeader = common.CleanInvalidUTF8(chunk.ContextHeader)
 		if chunk.SourceContent == "" {
 			chunk.SourceContent = chunk.Content
 		}
@@ -735,10 +736,20 @@ func (r *chunkRepository) FindFAQChunkWithDuplicateQuestion(
 		return nil, nil
 	}
 
+	// Every non-deleted status counts, including ChunkStatusStored: a chunk that
+	// is written but not yet indexed is a sibling create still in flight, and
+	// skipping it lets a retried request insert a second row for the same
+	// question. Soft-deleted rows are excluded by GORM.
 	db := r.db.WithContext(ctx).
 		Select("id, metadata").
-		Where("tenant_id = ? AND knowledge_base_id = ? AND chunk_type = ? AND status = ? AND id != ?",
-			tenantID, kbID, types.ChunkTypeFAQ, types.ChunkStatusIndexed, excludeChunkID)
+		Where("tenant_id = ? AND knowledge_base_id = ? AND chunk_type = ? AND status IN (?) AND id != ?",
+			tenantID, kbID, types.ChunkTypeFAQ,
+			[]int{
+				int(types.ChunkStatusDefault),
+				int(types.ChunkStatusStored),
+				int(types.ChunkStatusIndexed),
+			},
+			excludeChunkID)
 
 	switch r.db.Name() {
 	case "mysql":
