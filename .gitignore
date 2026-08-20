@@ -57,3 +57,13 @@ fix-docker.sh
 
 # WeChat Mini Program local/private configuration
 miniprogram/project.private.config.json
+
+# Staging dir for the Docker sandbox self-check probe (removed after each run)
+.weknora-sandbox-check-*
+
+# Windows 上 `go build ./cmd/...` 产出 <pkg>.exe，与上游 Linux 下的产物名
+# (WeKnora) 不同，上游规则覆盖不到。仓库里没有任何该被跟踪的 .exe。
+#
+# 这条被上游 .gitignore 覆盖过一次，导致 411MB 的 server.exe 二次混入并被
+# GitHub 拒推。放在文件末尾，减少与上游同一区域冲突的机会。
+*.exe

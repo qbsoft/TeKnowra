@@ -49,20 +49,23 @@ func withLLMTimeout(ctx context.Context, d time.Duration) (context.Context, cont
 // Per-request timeout is enforced via context deadline (see defaultChatTimeout / defaultStreamTimeout)
 // rather than http.Client.Timeout, so streaming calls are not prematurely terminated.
 // Uses SSRFSafeDialContext to prevent DNS rebinding attacks at the connection layer.
-var rawHTTPClient = &http.Client{
-	Transport: &http.Transport{
-		Proxy:               http.ProxyFromEnvironment,
-		DialContext:         secutils.SSRFSafeDialContext,
-		TLSHandshakeTimeout: 10 * time.Second,
-		// Shorter than the 90s default on purpose. Providers and the gateways
-		// in front of them commonly drop idle connections around 60s without
-		// telling the client; reusing one of those fails immediately with EOF.
-		// Pruning ours first turns "first request after a pause always fails"
-		// into a fresh dial nobody notices.
-		IdleConnTimeout:     30 * time.Second,
-		MaxIdleConnsPerHost: 5,
-	},
+var rawHTTPTransport = &http.Transport{
+	Proxy:               http.ProxyFromEnvironment,
+	DialContext:         secutils.SSRFSafeDialContext,
+	TLSHandshakeTimeout: 10 * time.Second,
+	// Shorter than the 90s default on purpose. Providers and the gateways in
+	// front of them commonly drop idle connections around 60s without telling
+	// the client; reusing one of those fails immediately with EOF. Pruning
+	// ours first turns "first request after a pause always fails" into a fresh
+	// dial nobody notices.
+	IdleConnTimeout:     30 * time.Second,
+	MaxIdleConnsPerHost: 5,
 }
+
+var rawHTTPClient = secutils.NewSSRFSafeHTTPClientWithTransport(
+	secutils.SSRFSafeHTTPClientConfig{Timeout: 0, MaxRedirects: 10},
+	rawHTTPTransport,
+)
 
 // markReplayable tells net/http that this POST may be retried on a connection
 // that turned out to be dead.
