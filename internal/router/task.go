@@ -42,12 +42,14 @@ type AsynqTaskParams struct {
 	DataTableSummary     interfaces.TaskHandler `name:"dataTableSummary"`
 	ImageMultimodal      interfaces.TaskHandler `name:"imageMultimodal"`
 	KnowledgePostProcess interfaces.TaskHandler `name:"knowledgePostProcess"`
+	KnowledgeAutoTag     interfaces.TaskHandler `name:"knowledgeAutoTag"`
 	WikiIngest           interfaces.TaskHandler `name:"wikiIngest"`
 	TemporaryDocument    interfaces.TemporaryDocumentService
+	MemoryService        interfaces.MemoryService
+	DeadLetterRepo       interfaces.TaskDeadLetterRepository
+	SpanTracker          service.SpanTracker
 	// AgentCronRunner is nil when scheduled tasks are switched off.
 	AgentCronRunner *service.AgentCronRunner
-	DeadLetterRepo  interfaces.TaskDeadLetterRepository
-	SpanTracker     service.SpanTracker
 }
 
 // defaultRedisOpTimeout is the previous hard-coded read timeout. The 100ms
@@ -302,6 +304,7 @@ func RunAsynqServer(params AsynqTaskParams) *asynq.ServeMux {
 
 	// Register knowledge post process handler
 	mux.HandleFunc(types.TypeKnowledgePostProcess, params.KnowledgePostProcess.Handle)
+	mux.HandleFunc(types.TypeKnowledgeAutoTag, params.KnowledgeAutoTag.Handle)
 
 	// Register data source sync handler
 	mux.HandleFunc(types.TypeDataSourceSync, params.DataSourceService.ProcessSync)
@@ -317,6 +320,9 @@ func RunAsynqServer(params AsynqTaskParams) *asynq.ServeMux {
 	// and both land on QueueWiki, so the dedicated wiki pool serves them.
 	mux.HandleFunc(types.TypeWikiIngest, params.WikiIngest.Handle)
 	mux.HandleFunc(types.TypeWikiFinalize, params.WikiIngest.Handle)
+
+	// Register long-term memory distillation handler
+	mux.HandleFunc(types.TypeMemoryExtract, params.MemoryService.Handle)
 
 	// Run the same mux on every pool. Shared and dedicated servers intentionally
 	// overlap, but Redis dequeue is atomic, so each task still executes once.
