@@ -1081,8 +1081,8 @@ export default {
       backendDescriptions: {
         cube: 'Self-hosted MicroVM cluster for private or on-premises deployments',
         e2b: 'Managed MicroVM service or an E2B-compatible deployment',
-        docker: 'Run every script in a short-lived container on this WeKnora host',
-        local: 'Run scripts directly in the WeKnora server process environment',
+        docker: 'Run every script in a short-lived container on this TeKnowra host',
+        local: 'Run scripts directly in the TeKnowra server process environment',
       },
       addConfig: 'Add sandbox backend',
       viewClusterGuide: 'Cluster setup guide',
@@ -1130,12 +1130,12 @@ export default {
       policySaveFailed: 'Failed to update sandbox execution policy',
       legacyConfig: 'Deprecated',
       namedBackendHint: 'Workspace configuration is the only runtime source. Agents without one cannot execute skill scripts.',
-      weknoraTemplateTitle: 'WeKnora standard template',
-      weknoraDockerImage: 'WeKnora standard image',
+      weknoraTemplateTitle: 'TeKnowra standard template',
+      weknoraDockerImage: 'TeKnowra standard image',
       weknoraDockerImageHint: 'Each execution starts an isolated, short-lived container from this image. No session sandbox is retained.',
-      localRuntimeWarning: 'Local process runs skill scripts directly on the WeKnora server without container or MicroVM isolation. Use only in a trusted development workspace.',
-      weknoraTemplateOverview: 'WeKnora provides the standard runtime. Templates are discovered after connecting and the standard one is created when missing.',
-      weknoraTemplateDescription: 'Includes the Python, Node.js, CLI tools, workspace path, and non-root execution user expected by WeKnora skills.',
+      localRuntimeWarning: 'Local process runs skill scripts directly on the TeKnowra server without container or MicroVM isolation. Use only in a trusted development workspace.',
+      weknoraTemplateOverview: 'TeKnowra provides the standard runtime. Templates are discovered after connecting and the standard one is created when missing.',
+      weknoraTemplateDescription: 'Includes the Python, Node.js, CLI tools, workspace path, and non-root execution user expected by TeKnowra skills.',
       recommendedTag: 'Recommended',
       cardTemplateConfigured: 'Template configured',
       cardCredentialMissing: 'API key missing',
@@ -1146,21 +1146,21 @@ export default {
       cardPrivateEndpoints: 'Private endpoints allowed',
       templateNotConfigured: 'Template not configured',
       imageNotConfigured: 'Image not configured',
-      localRuntimeSummary: 'WeKnora server process',
+      localRuntimeSummary: 'TeKnowra server process',
       templateApplied: 'Applied',
       refreshTemplates: 'Refresh templates',
       templateSelectHelp: 'Templates are loaded from this cluster. The saved configuration stores the ID automatically.',
       templateSelectPlaceholder: 'Connect to the cluster to load templates',
-      templateLoadHint: 'Enter the cluster connection and refresh. WeKnora creates its standard template when missing.',
+      templateLoadHint: 'Enter the cluster connection and refresh. TeKnowra creates its standard template when missing.',
       templateLoadFailed: 'Failed to load templates',
-      standardTemplateProvisioning: 'The WeKnora standard template is being created. Refresh shortly to see its status.',
+      standardTemplateProvisioning: 'The TeKnowra standard template is being created. Refresh shortly to see its status.',
       templateNotReady: 'The selected template is not ready. Refresh and wait for the build to finish.',
       connectionPassed: 'Connection verified. Templates below are loaded from this cluster.',
       connectionPassedTitle: 'Cluster connected',
-      templateStepHint: 'WeKnora automatically creates its standard template when missing. You can continue after a template is ready.',
+      templateStepHint: 'TeKnowra automatically creates its standard template when missing. You can continue after a template is ready.',
       loadingTemplates: 'Loading templates from the cluster...',
       templateBuildingHint: 'The standard template is being built automatically. This list will refresh.',
-      templateUntaggedHint: 'The builds finished but none carries the default tag, so sandbox creation cannot resolve this template. Delete it in E2B and refresh; WeKnora will rebuild it.',
+      templateUntaggedHint: 'The builds finished but none carries the default tag, so sandbox creation cannot resolve this template. Delete it in E2B and refresh; TeKnowra will rebuild it.',
       templateFailedReason: 'Build failed: {reason}',
       noTemplates: 'No templates were returned by this cluster.',
       templateReadyHint: 'Template “{name}” is ready and selected.',
@@ -5908,7 +5908,7 @@ export default {
       directWarning: 'Direct user ID trusts the caller-supplied header. Use only for trusted server-to-server calls.',
       directWarningDetail: 'Anyone with the API key can change the user ID header to impersonate another external user and reuse or hijack that user\'s MCP OAuth authorization. Do not use this from browsers or untrusted clients; use Signed token for end-user apps.',
       signedRecommended: 'Recommended for user-facing apps: your backend signs a short-lived HS256 JWT for the external user.',
-      signedFlowDetail: 'Keep the HMAC secret only on WeKnora and your trusted backend—never put it in requests or ship it to browsers. The request header carries the JWT string signed with that secret (it changes on each issuance or after expiry), not the secret itself. JWT must include sub (external user ID), tenant_id, aud=teknowra, and exp (max 24h lifetime).',
+      signedFlowDetail: 'Keep the HMAC secret only on TeKnowra and your trusted backend—never put it in requests or ship it to browsers. The request header carries the JWT string signed with that secret (it changes on each issuance or after expiry), not the secret itself. JWT must include sub (external user ID), tenant_id, aud=teknowra, and exp (max 24h lifetime).',
       directHeader: 'User ID header',
       requireDirectHeader: 'Require user ID header',
       requireDirectHeaderDesc: 'When enabled, API Key requests without the user ID header are rejected; when disabled, all requests are treated as the whole workspace with no per-user distinction.',
@@ -5989,7 +5989,7 @@ export default {
     },
     chrome: {
       title: 'Knowledge Assistant',
-      subtitle: 'For self-hosted WeKnora: ask questions in a sidebar, clip web pages, and save Markdown notes into your knowledge bases while you browse.',
+      subtitle: 'For self-hosted TeKnowra: ask questions in a sidebar, clip web pages, and save Markdown notes into your knowledge bases while you browse.',
       capabilitiesTitle: 'Core capabilities',
       capabilities: {
         qa: {
@@ -6023,7 +6023,7 @@ export default {
         },
         port: {
           title: 'Desktop: fixed port (recommended)',
-          desc: 'On WeKnora Desktop, set a fixed API port (e.g. 37841) in API Info so the URL stays stable across restarts.'
+          desc: 'On TeKnowra Desktop, set a fixed API port (e.g. 37841) in API Info so the URL stays stable across restarts.'
         },
         install: {
           title: 'Install the extension',
@@ -6043,7 +6043,7 @@ export default {
     },
     claw: {
       title: 'WeKnora Skill',
-      subtitle: 'Import documents and run hybrid retrieval (vector + keyword) via the WeKnora REST API—for uploads, URL imports, Markdown entries, and cross-KB search.',
+      subtitle: 'Import documents and run hybrid retrieval (vector + keyword) via the TeKnowra REST API—for uploads, URL imports, Markdown entries, and cross-KB search.',
       capabilitiesTitle: 'Skill capabilities',
       capabilities: {
         upload: {
