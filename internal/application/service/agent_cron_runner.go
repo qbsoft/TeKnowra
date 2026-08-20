@@ -127,7 +127,19 @@ func (r *AgentCronRunner) Handle(ctx context.Context, task *asynq.Task) error {
 		}
 	}()
 
+	// Bracket the run with logs.
+	//
+	// Without these a run that dies without unwinding leaves nothing at all:
+	// no result row, no released claim, no error — just a job that looks
+	// permanently "running". That happened once and cost an hour to pin down,
+	// because there was no way to tell "still going" from "vanished".
+	logger.Infof(ctx, "[AgentCron] job=%s (%q) starting, mode=%s", job.ID, job.Name, job.Mode)
+	started := time.Now()
+
 	output, runErr := r.execute(ctx, job)
+
+	logger.Infof(ctx, "[AgentCron] job=%s finished in %s, err=%v",
+		job.ID, time.Since(started).Round(time.Second), runErr)
 	r.recordOutcome(ctx, job, output, runErr)
 
 	// The outcome is recorded either way, so a failed run must not be

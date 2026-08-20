@@ -194,3 +194,51 @@ func TestScheduler_AddOrUpdateReplacesEntry(t *testing.T) {
 		t.Fatalf("cron has %d entries after Remove, want 0", got)
 	}
 }
+
+// robfig has no fire-once primitive: a one-shot is registered as "@every d",
+// which repeats forever. It must therefore unregister itself the moment it
+// fires — otherwise it keeps re-triggering every d, invisibly, because the
+// overlap guard quietly skips each extra tick while the first run is going.
+func TestScheduler_OneShotFiresOnlyOnce(t *testing.T) {
+	job := testJob()
+	job.ScheduleKind = types.CronScheduleOnce
+	soon := time.Now().Add(time.Hour)
+	job.NextRunAt = &soon
+	job.ScheduleExpr = soon.Format(time.RFC3339)
+
+	repo := newFakeCronRepo(job)
+	enq := newFakeEnqueuer()
+	s := NewAgentCronScheduler(repo, enq, "replica-a")
+
+	if err := s.AddOrUpdate(job); err != nil {
+		t.Fatalf("AddOrUpdate: %v", err)
+	}
+	if got := len(s.cron.Entries()); got != 1 {
+		t.Fatalf("registered %d entries, want 1", got)
+	}
+
+	s.trigger(job.ID, job.TenantID)
+
+	if got := enq.accepted(); got != 1 {
+		t.Errorf("enqueued %d times, want 1", got)
+	}
+	if got := len(s.cron.Entries()); got != 0 {
+		t.Errorf("one-shot still registered after firing (%d entries) — it will fire again", got)
+	}
+}
+
+// A recurring job must stay registered; only one-shots retire themselves.
+func TestScheduler_RecurringStaysRegistered(t *testing.T) {
+	job := testJob() // cron kind
+	repo := newFakeCronRepo(job)
+	s := NewAgentCronScheduler(repo, newFakeEnqueuer(), "replica-a")
+
+	if err := s.AddOrUpdate(job); err != nil {
+		t.Fatalf("AddOrUpdate: %v", err)
+	}
+	s.trigger(job.ID, job.TenantID)
+
+	if got := len(s.cron.Entries()); got != 1 {
+		t.Errorf("recurring job unregistered itself (%d entries), want 1", got)
+	}
+}

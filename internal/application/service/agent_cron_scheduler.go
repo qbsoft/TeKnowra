@@ -131,8 +131,14 @@ func (s *AgentCronScheduler) AddOrUpdate(job *types.AgentCronJob) error {
 		return nil
 	}
 
-	// A one-shot job has no recurring expression to hand robfig; it is fired
-	// by its next_run_at instead, expressed as a single-occurrence schedule.
+	// A one-shot job has no recurring expression to hand robfig, so it is
+	// registered as an interval equal to the time remaining.
+	//
+	// robfig has no fire-once primitive: "@every d" repeats forever. The entry
+	// is therefore removed as soon as it fires (see trigger). Without that, a
+	// one-shot re-triggers every d until its repeat budget retires it — which
+	// is invisible while the first run is still going, because the overlap
+	// guard quietly skips each extra tick.
 	spec := job.ScheduleExpr
 	if job.ScheduleKind == types.CronScheduleOnce {
 		if job.NextRunAt == nil {
@@ -189,6 +195,14 @@ func (s *AgentCronScheduler) trigger(jobID string, tenantID uint64) {
 
 	if err := s.enqueue(ctx, job); err != nil {
 		logger.Errorf(ctx, "[AgentCron] enqueue job=%s failed: %v", jobID, err)
+		return
+	}
+
+	// A one-shot has now had its shot. Unregister it here rather than relying
+	// on the repeat budget: that only lands after the run finishes, and a slow
+	// or wedged run leaves the entry firing in the meantime.
+	if job.ScheduleKind == types.CronScheduleOnce {
+		s.Remove(jobID)
 	}
 }
 
