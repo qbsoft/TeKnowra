@@ -67,3 +67,8 @@ miniprogram/project.private.config.json
 # 这条被上游 .gitignore 覆盖过一次，导致 411MB 的 server.exe 二次混入并被
 # GitHub 拒推。放在文件末尾，减少与上游同一区域冲突的机会。
 *.exe
+
+# Windows 上 `go build ./cmd/...` 产出 <pkg>.exe，上游（Linux）的规则覆盖不到，
+# git add -A 会把 400MB 的二进制提交进去，push 时被 GitHub GH001 挡下。
+# 这条被上游 .gitignore 覆盖过一次导致二次混入，所以放在文件末尾。
+*.exe
