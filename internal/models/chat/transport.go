@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"github.com/google/uuid"
 	"net/http"
 	"os"
 	"strconv"
@@ -53,7 +54,38 @@ var rawHTTPClient = &http.Client{
 		Proxy:               http.ProxyFromEnvironment,
 		DialContext:         secutils.SSRFSafeDialContext,
 		TLSHandshakeTimeout: 10 * time.Second,
-		IdleConnTimeout:     90 * time.Second,
+		// Shorter than the 90s default on purpose. Providers and the gateways
+		// in front of them commonly drop idle connections around 60s without
+		// telling the client; reusing one of those fails immediately with EOF.
+		// Pruning ours first turns "first request after a pause always fails"
+		// into a fresh dial nobody notices.
+		IdleConnTimeout:     30 * time.Second,
 		MaxIdleConnsPerHost: 5,
 	},
+}
+
+// markReplayable tells net/http that this POST may be retried on a connection
+// that turned out to be dead.
+//
+// The failure it fixes: an idle pooled connection the provider already closed
+// is picked for the next request, which fails with a bare EOF. net/http is
+// willing to retry that on a reused connection — but first it asks
+// Request.isReplayable(), and a POST only qualifies if it carries an
+// idempotency header:
+//
+//	// net/http/request.go
+//	if r.Header.has("Idempotency-Key") || r.Header.has("X-Idempotency-Key") {
+//	    return true
+//	}
+//
+// Without the header the retry is refused and the EOF surfaces to the user,
+// which is why the first message after a pause failed and the second always
+// worked — the second got a fresh connection.
+//
+// Safe here because the retry only fires when nothing was written or the
+// server closed an idle connection, i.e. when the provider never saw the
+// request. The body is a *bytes.Buffer, so GetBody is already set and the
+// request can genuinely be replayed.
+func markReplayable(req *http.Request) {
+	req.Header.Set("X-Idempotency-Key", uuid.NewString())
 }

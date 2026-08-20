@@ -136,6 +136,7 @@ func (c *AnthropicChat) Chat(ctx context.Context, messages []Message, opts *Chat
 	httpReq.Header.Set("anthropic-version", anthropicVersion)
 	secutils.ApplyCustomHeaders(httpReq, c.customHeaders)
 
+	markReplayable(httpReq)
 	resp, err := rawHTTPClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("send request: %w", err)
@@ -198,6 +199,7 @@ func (c *AnthropicChat) ChatStream(ctx context.Context, messages []Message, opts
 	httpReq.Header.Set("anthropic-version", anthropicVersion)
 	secutils.ApplyCustomHeaders(httpReq, c.customHeaders)
 
+	markReplayable(httpReq)
 	resp, err := rawHTTPClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("send request: %w", err)
