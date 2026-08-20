@@ -324,6 +324,7 @@ func (s *agentService) registerMCPTools(
 		} else {
 			logger.Infof(ctx, "Registered %d MCP tool(s) from %d enabled service(s)", registered, len(enabledServices))
 		}
+		applyMCPToolAllowlist(ctx, toolRegistry, config)
 	}
 }
 
