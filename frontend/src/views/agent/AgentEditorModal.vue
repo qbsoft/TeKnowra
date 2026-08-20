@@ -1142,6 +1142,10 @@
                                 <t-icon name="error-circle" />
                                 {{ $t('agentEditor.tools.writeWarning') }}
                               </span>
+                              <span v-else-if="(group as any).warning" class="tool-group-warning">
+                                <t-icon name="error-circle" />
+                                {{ (group as any).warning }}
+                              </span>
                             </header>
                             <div class="tool-grid">
                               <t-checkbox v-for="tool in group.tools" :key="tool.value" :value="tool.value"
@@ -1741,6 +1745,7 @@ import ModelSelector from '@/components/ModelSelector.vue';
 import KBParserSettings, { type ParserEngineRule } from '@/views/knowledge/settings/KBParserSettings.vue';
 import AgentShareSettings from '@/components/AgentShareSettings.vue';
 import { listEmbedChannels } from '@/api/embed';
+import { listMCPAgentTools, type MCPAgentTool } from '@/api/mcp-service';
 import { getRootZoom, rectToCssPx } from '@/utils/zoom';
 import {
   evaluateToolRequirement,
@@ -1762,6 +1767,61 @@ const router = useRouter();
 const orgStore = useOrganizationStore();
 const chatResources = useChatResourcesStore();
 const editorResources = useEditorResourcesStore();
+
+// ==================== MCP 工具（按工具授权）====================
+// 勾了 MCP 服务只决定"连什么"，具体给 agent 哪些工具由 allowed_tools 决定，
+// 和内置工具用同一份名单。这里把选中服务的工具拉回来，作为动态分组并进
+// 下面那个工具网格，复用同一个 checkbox group。
+//
+// 名字用后端返回的 registry_name（mcp_mail_send_email），不是服务自报的
+// send_email —— 两者之间的转换只在后端有实现，前端不复刻。
+// 一个服务一个状态。拉不到工具和拉到了零个工具是两回事，得分开记——
+// 前者要告诉用户“连不上”，后者才是真的没工具。
+type McpToolLoad =
+  | { status: 'loading' }
+  | { status: 'ok'; tools: MCPAgentTool[] }
+  | { status: 'error'; message: string };
+
+const mcpToolsByService = ref<Record<string, McpToolLoad>>({});
+const mcpToolsLoading = computed(() =>
+  Object.values(mcpToolsByService.value).some(s => s.status === 'loading'),
+);
+
+// 每个服务各自落地，不等齐。用 Promise.all 等全部回来的话，一个卡住的
+// 服务会把所有健康服务的分组一起拖到它超时为止。
+async function loadMcpToolsForSelectedServices() {
+  const ids: string[] = formData.value?.config?.mcp_services || [];
+  if (!ids.length) {
+    mcpToolsByService.value = {};
+    return;
+  }
+
+  // 取消选掉的服务要从表里消失；已经拉回来的保留，避免重新勾选时闪一下。
+  const next: Record<string, McpToolLoad> = {};
+  for (const id of ids) {
+    next[id] = mcpToolsByService.value[id] || { status: 'loading' };
+  }
+  mcpToolsByService.value = next;
+
+  const inFlight = ids;
+  await Promise.all(
+    inFlight.map(async (id: string) => {
+      try {
+        const tools = await listMCPAgentTools(id);
+        // 期间可能又取消选了这个服务，那就不要把它写回去。
+        if (!(id in mcpToolsByService.value)) return;
+        mcpToolsByService.value = { ...mcpToolsByService.value, [id]: { status: 'ok', tools } };
+      } catch (e: any) {
+        if (!(id in mcpToolsByService.value)) return;
+        const message = e?.response?.data?.error?.message || e?.message || String(e);
+        mcpToolsByService.value = {
+          ...mcpToolsByService.value,
+          [id]: { status: 'error', message },
+        };
+      }
+    }),
+  );
+}
 
 const { t, locale: i18nLocale } = useI18n();
 
@@ -2149,12 +2209,52 @@ const groupedAvailableTools = computed(() => {
     if (!map[g]) map[g] = [];
     map[g].push(tool);
   }
-  return toolGroups.value
+  const builtin = toolGroups.value
     .map(g => ({
       ...g,
       tools: map[g.key] || [],
     }))
     .filter(g => g.tools.length > 0);
+
+  // 每个选中的 MCP 服务一组，接在内置工具后面。用同一个网格是有意的：
+  // 对用户来说这就是一份工具清单，工具来自哪里是分组标题的事。
+  const services = editorResources.mcpServices || [];
+  const mcpGroups = (formData.value?.config?.mcp_services || [])
+    .map((id: string) => {
+      const state = mcpToolsByService.value[id];
+      const tools = state?.status === 'ok' ? state.tools : [];
+      const svc = services.find((x: any) => x.id === id);
+      const degraded = tools.some(t => t.name_degraded);
+      let warning = '';
+      if (state?.status === 'error') {
+        warning = t('agentEditor.tools.mcpLoadFailed', { message: state.message });
+      } else if (state?.status === 'loading') {
+        warning = t('agentEditor.tools.mcpLoading');
+      } else if (degraded) {
+        // 服务名被规范化成空串时，它的工具名会跟别的同类服务撞，撞了就
+        // 静默少工具。在这里说出来，比让人事后查日志强。
+        warning = t('agentEditor.tools.mcpNameDegraded');
+      }
+      return {
+        key: `mcp_${id}`,
+        label: svc?.name || id,
+        warning,
+        tools: tools.map(x => ({
+          value: x.registry_name,
+          label: x.tool_name,
+          description: x.description,
+          disabled: false,
+          disabledReason: undefined,
+          danger: false,
+          group: `mcp_${id}`,
+        })),
+      };
+    })
+    // 连不上的服务照样出一组，只是组里没工具、标题旁边写着原因。丢掉它
+    // 的话，用户在 MCP 服务里勾了、这里却什么都没有，还不知道为什么。
+    .filter(g => g.tools.length > 0 || g.warning);
+
+  return [...builtin, ...mcpGroups];
 });
 
 // ==================== 有效工具预览 ====================
@@ -2583,6 +2683,13 @@ const syncActivePromptAnchor = () => {
 };
 
 watch(promptNavItems, syncActivePromptAnchor);
+
+// 选中的 MCP 服务变了就重拉工具列表：勾掉一个服务，它的工具组要跟着消失。
+watch(
+  () => formData.value?.config?.mcp_services,
+  () => { loadMcpToolsForSelectedServices(); },
+  { deep: true, immediate: true },
+);
 
 watch(currentSection, (section) => {
   if (section === 'prompts') {

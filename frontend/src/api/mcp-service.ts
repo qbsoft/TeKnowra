@@ -88,6 +88,32 @@ export async function listMCPServices(): Promise<MCPService[]> {
 }
 
 // Get a single MCP service by ID
+/** 一个 MCP 工具，以及它在 agent 的 allowed_tools 里应当填写的名字。 */
+export interface MCPAgentTool {
+  /** MCP 服务自己报出的名字，如 send_email */
+  tool_name: string
+  /** 注册后的名字，配 allowed_tools 要用这个，如 mcp_mail_send_email */
+  registry_name: string
+  description?: string
+  /**
+   * 服务名里没有可用的 ASCII 字符，被规范化成了空串，于是该服务的工具
+   * 全叫 mcp__<工具名>。这种名字在多个同类服务之间会撞，撞了之后先注册
+   * 的赢、后面的被静默丢弃，所以要在界面上提示用户改服务名。
+   */
+  name_degraded?: boolean
+}
+
+/**
+ * 列出某个 MCP 服务的工具及其在 agent 配置里的名字。
+ *
+ * 与 /tools 的区别：那个返回 MCP 服务自报的原始名，而 allowed_tools 要的是
+ * 注册后的名字。两者之间的转换只存在于后端，前端不复刻规则。
+ */
+export async function listMCPAgentTools(id: string): Promise<MCPAgentTool[]> {
+  const response: any = await get(`/api/v1/mcp-services/${id}/agent-tools`)
+  return response.data || []
+}
+
 export async function getMCPService(id: string): Promise<MCPService> {
   const response: any = await get(`/api/v1/mcp-services/${id}`)
   return response.data

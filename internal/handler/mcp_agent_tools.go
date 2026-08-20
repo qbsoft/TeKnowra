@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/errors"
@@ -48,6 +49,19 @@ type agentToolView struct {
 	NameDegraded bool `json:"name_degraded,omitempty"`
 }
 
+// nameIsDegraded reports whether a registry name lost its service segment.
+//
+// A healthy name is "mcp_<service>_<tool>". When the service name sanitises to
+// nothing — every character was non-ASCII — the segment collapses and the name
+// becomes "mcp__<tool>", which every such service produces identically. The
+// second one to register loses, with only a log line to say so.
+//
+// Spelled as a named function so a test can pin it against names built by the
+// real MCPTool rather than against this one line's arithmetic.
+func nameIsDegraded(registryName string) bool {
+	return strings.HasPrefix(registryName, "mcp__")
+}
+
 // ListAgentTools godoc
 // @Summary      列出 MCP 服务的工具及其在 agent 配置中的名字
 // @Description  返回每个工具在 allowed_tools 里应当填写的名称
@@ -89,8 +103,7 @@ func (h *MCPAgentToolsHandler) ListAgentTools(c *gin.Context) {
 		// the transformation lives in one place and this cannot drift from it.
 		probe := tools.NewMCPTool(svc, t, nil, nil, 0)
 		name := probe.Name()
-		// "mcp_" + "" + "_" + tool means the service name sanitised to nothing.
-		if len(name) > 4 && name[4] == '_' {
+		if nameIsDegraded(name) {
 			degraded = true
 		}
 		views = append(views, agentToolView{
