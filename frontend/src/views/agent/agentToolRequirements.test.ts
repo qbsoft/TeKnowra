@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   callableToolNames,
+  canResolveRequirements,
   enabledSkillNames,
   mcpCandidateServiceIds,
   unmetSkillTools,
@@ -81,4 +82,18 @@ test('技能模式决定谁被启用', () => {
   assert.deepEqual([...enabledSkillNames('all', SKILLS, [])], ['contract-review', 'plain'])
   assert.deepEqual([...enabledSkillNames('selected', SKILLS, ['plain'])], ['plain'])
   assert.deepEqual([...enabledSkillNames('none', SKILLS, ['plain'])], [])
+})
+
+test('所有候选服务都拉到了才能给结论', () => {
+  const ok = () => 'ok' as const
+  assert.equal(canResolveRequirements(['a', 'b'], ok), true)
+  assert.equal(canResolveRequirements([], ok), true, '没有候选服务时不存在映射缺口')
+})
+
+test('有服务拉不到就不给结论', () => {
+  // 回归：MCP 服务器挂了的时候，get_review_summary 明明勾着，却被报成缺失。
+  // 拿不到工具列表就拿不到 send_email ↔ mcp_mail_send_email 的映射，
+  // 这时候说「缺」是误报，而误报几次这个提示就没人看了。
+  assert.equal(canResolveRequirements(['a', 'b'], id => (id === 'b' ? 'error' : 'ok')), false)
+  assert.equal(canResolveRequirements(['a'], () => 'loading'), false)
 })

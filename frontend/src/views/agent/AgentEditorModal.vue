@@ -1298,6 +1298,17 @@
                       </div>
                     </div>
 
+                    <!-- 核不了的时候明说核不了，别拿误报凑数 -->
+                    <div v-if="skillsSelectionMode !== 'none' && !skillRequirementsResolvable"
+                      class="setting-row setting-row-vertical">
+                      <div class="setting-control setting-control-full">
+                        <div class="skills-missing-summary">
+                          <t-icon name="info-circle" />
+                          <div>{{ $t('agent.editor.skillToolsUncheckable') }}</div>
+                        </div>
+                      </div>
+                    </div>
+
                     <!-- 「全部」模式下没有逐个的勾选框，缺工具就没地方挂，用一条汇总说 -->
                     <div v-if="skillsSelectionMode === 'all' && unmetSkillCount > 0"
                       class="setting-row setting-row-vertical">
@@ -1750,6 +1761,7 @@ import { type ModelConfig } from '@/api/model';
 import { type AgentNotReadyReasonKey, agentRequiresRerankModel } from '@/utils/agent-readiness';
 import { type SkillInfo } from '@/api/skill';
 import {
+  canResolveRequirements,
   callableToolNames as computeCallableToolNames,
   enabledSkillNames as computeEnabledSkillNames,
   mcpCandidateServiceIds as computeMcpCandidateServiceIds,
@@ -2317,16 +2329,19 @@ const callableToolNames = computed<Set<string>>(() => {
   return computeCallableToolNames(formData.value?.config?.allowed_tools, loaded);
 });
 
-// 服务还没拉回来的时候别报缺失——那是「还不知道」，不是「没有」。
-const mcpToolsStillLoading = computed(() =>
-  mcpCandidateServiceIds.value.some(
-    id => (mcpToolsByService.value[id]?.status ?? 'loading') === 'loading',
+// 能不能给出「缺哪些工具」的结论。要求名和授权名之间的映射只有服务的工具
+// 列表能给，有服务没拉到（还在拉 / 连不上）映射就是残缺的，此时说「缺」很
+// 可能是误报——工具其实勾了，只是核不出来。
+const skillRequirementsResolvable = computed(() =>
+  canResolveRequirements(
+    mcpCandidateServiceIds.value,
+    id => mcpToolsByService.value[id]?.status ?? 'loading',
   ),
 );
 
 // skill 名 -> 它声明了但这个 agent 给不了的工具
 const unmetSkillTools = computed<Record<string, string[]>>(() => {
-  if (mcpToolsStillLoading.value) return {};
+  if (!skillRequirementsResolvable.value) return {};
   return computeUnmetSkillTools(
     skillOptions.value,
     computeEnabledSkillNames(

@@ -79,6 +79,26 @@ export function callableToolNames(
   return names
 }
 
+/** 某个候选服务的工具列表拉到了没有。 */
+export type ServiceLoadStatus = 'ok' | 'error' | 'loading'
+
+/**
+ * 能不能给出「缺哪些工具」的结论。
+ *
+ * 要求名（send_email）和授权名（mcp_mail_send_email）之间的映射，只有服务
+ * 的工具列表能给。有任何一个候选服务没拉到——还在拉，或者连不上——这个映射
+ * 就是残缺的，此时说「缺少 xxx」很可能是误报：工具其实勾了，只是核不出来。
+ *
+ * 宁可说「核不了」也不误报。这个提示平时不出现，一旦出现就该是真的；喊错
+ * 几次，人就学会无视它了，那它在真正该响的时候也不会被看见。
+ */
+export function canResolveRequirements(
+  candidateIds: string[],
+  statusOf: (id: string) => ServiceLoadStatus,
+): boolean {
+  return candidateIds.every(id => statusOf(id) === 'ok')
+}
+
 /** 按技能选择模式算出这次实际启用的技能名。 */
 export function enabledSkillNames(
   mode: 'all' | 'selected' | 'none' | undefined,

@@ -5469,6 +5469,7 @@ export default {
       noSkillsAvailable: '사전 설치된 Skills가 없습니다',
       skillMissingTools: '누락된 도구: {tools}. 스킬은 그대로 실행되지만 해당 호출 지점에서 오류 없이 임의로 답합니다.',
       skillMissingToolsNamed: '스킬 「{skill}」에 누락된 도구: {tools}. 그대로 실행되지만 해당 호출 지점에서 오류 없이 임의로 답합니다.',
+      skillToolsUncheckable: '일부 MCP 서비스의 도구 목록을 가져오지 못해 스킬 의존성을 지금은 확인할 수 없습니다. 「도구 설정」에서 연결되지 않은 서비스를 확인하세요.',
       sandboxConfig: 'Sandbox backend',
       sandboxConfigDesc: 'Choose which sandbox backend this agent\'s skill scripts execute in.',
       sandboxBackend: 'Sandbox backend',

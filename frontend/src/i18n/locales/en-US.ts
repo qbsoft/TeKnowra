@@ -1019,6 +1019,7 @@ export default {
       noSkillsAvailable: 'No preloaded Skills available',
       skillMissingTools: "Missing tools: {tools}. The skill still runs, but improvises past the missing calls instead of failing.",
       skillMissingToolsNamed: "Skill '{skill}' is missing tools: {tools}. It still runs, but improvises past the missing calls instead of failing.",
+      skillToolsUncheckable: "Some MCP services did not return their tool lists, so skill requirements cannot be checked right now. See Tools for which service is unreachable.",
       sandboxConfig: 'Sandbox backend',
       sandboxConfigDesc: 'Choose which sandbox backend this agent\'s skill scripts execute in.',
       sandboxBackend: 'Sandbox backend',

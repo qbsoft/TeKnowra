@@ -5469,6 +5469,7 @@ export default {
       noSkillsAvailable: 'Нет доступных предустановленных Skills',
       skillMissingTools: 'Не хватает инструментов: {tools}. Навык всё равно запустится, но на месте вызова додумает ответ вместо ошибки.',
       skillMissingToolsNamed: 'Навыку «{skill}» не хватает инструментов: {tools}. Он всё равно запустится, но на месте вызова додумает ответ вместо ошибки.',
+      skillToolsUncheckable: 'Некоторые MCP-сервисы не вернули списки инструментов, поэтому зависимости навыков сейчас не проверить. Посмотрите в разделе инструментов, какой сервис недоступен.',
       sandboxConfig: 'Sandbox backend',
       sandboxConfigDesc: 'Choose which sandbox backend this agent\'s skill scripts execute in.',
       sandboxBackend: 'Sandbox backend',
