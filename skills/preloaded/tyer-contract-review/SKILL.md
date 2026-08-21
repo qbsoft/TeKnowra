@@ -1,6 +1,16 @@
 ---
 name: tyer-contract-review
 description: 按 CRM 里的审查清单做合同风险审查。当用户提供合同文本或指定台账里的合同，要求审查、找风险、看条款有没有问题时使用。也用于用户问「这份合同对我方有什么风险」「帮我看看这个合同」。仅在涉及合同审查时使用；查客户、订单、应收账款是 CRM 工具的职责，与本技能无关。
+# 正文里点名调用的 CRM 工具。写在这里是为了让配置 agent 的人在保存前就
+# 看见「这个技能要用的工具没给它」，而不是等模型读完指令、发现工具不在、
+# 自己编一个答案出来——那种失败不报错，只是答案变差。
+# 用的是 MCP 服务自报的工具名，不是注册表里的 mcp_xxx_yyy：后者的前缀取决于
+# 本工作空间把服务叫什么，写死在技能文件里就不可移植了。
+requires_tools:
+  - list_review_templates
+  - get_review_checklist
+  - submit_review_finding
+  - get_review_summary
 ---
 
 # 合同审查

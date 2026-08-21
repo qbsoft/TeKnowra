@@ -1142,6 +1142,10 @@
                                 <t-icon name="error-circle" />
                                 {{ $t('agentEditor.tools.writeWarning') }}
                               </span>
+                              <span v-else-if="(group as any).warning" class="tool-group-warning">
+                                <t-icon name="error-circle" />
+                                {{ (group as any).warning }}
+                              </span>
                             </header>
                             <div class="tool-grid">
                               <t-checkbox v-for="tool in group.tools" :key="tool.value" :value="tool.value"
@@ -1282,9 +1286,43 @@
                             <div class="skill-item-content">
                               <span class="skill-name">{{ skill.name }}</span>
                               <span class="skill-desc">{{ skill.description }}</span>
+                              <span v-if="unmetSkillTools[skill.name]" class="skill-missing-tools">
+                                <t-icon name="error-circle" />
+                                {{ $t('agent.editor.skillMissingTools', {
+                                  tools: unmetSkillTools[skill.name].join('、'),
+                                }) }}
+                              </span>
                             </div>
                           </t-checkbox>
                         </t-checkbox-group>
+                      </div>
+                    </div>
+
+                    <!-- 核不了的时候明说核不了，别拿误报凑数 -->
+                    <div v-if="skillsSelectionMode !== 'none' && !skillRequirementsResolvable"
+                      class="setting-row setting-row-vertical">
+                      <div class="setting-control setting-control-full">
+                        <div class="skills-missing-summary">
+                          <t-icon name="info-circle" />
+                          <div>{{ $t('agent.editor.skillToolsUncheckable') }}</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- 「全部」模式下没有逐个的勾选框，缺工具就没地方挂，用一条汇总说 -->
+                    <div v-if="skillsSelectionMode === 'all' && unmetSkillCount > 0"
+                      class="setting-row setting-row-vertical">
+                      <div class="setting-control setting-control-full">
+                        <div class="skills-missing-summary">
+                          <t-icon name="error-circle" />
+                          <div>
+                            <p v-for="(tools, name) in unmetSkillTools" :key="name">
+                              {{ $t('agent.editor.skillMissingToolsNamed', {
+                                skill: name, tools: (tools as string[]).join('、'),
+                              }) }}
+                            </p>
+                          </div>
+                        </div>
                       </div>
                     </div>
 
@@ -1722,6 +1760,13 @@ import {
 import { type ModelConfig } from '@/api/model';
 import { type AgentNotReadyReasonKey, agentRequiresRerankModel } from '@/utils/agent-readiness';
 import { type SkillInfo } from '@/api/skill';
+import {
+  canResolveRequirements,
+  callableToolNames as computeCallableToolNames,
+  enabledSkillNames as computeEnabledSkillNames,
+  mcpCandidateServiceIds as computeMcpCandidateServiceIds,
+  unmetSkillTools as computeUnmetSkillTools,
+} from './agentToolRequirements';
 import { type WebSearchProviderEntity } from '@/api/web-search-provider';
 import {
   isNamedSandboxBackend,
@@ -1741,6 +1786,7 @@ import ModelSelector from '@/components/ModelSelector.vue';
 import KBParserSettings, { type ParserEngineRule } from '@/views/knowledge/settings/KBParserSettings.vue';
 import AgentShareSettings from '@/components/AgentShareSettings.vue';
 import { listEmbedChannels } from '@/api/embed';
+import { listMCPAgentTools, type MCPAgentTool } from '@/api/mcp-service';
 import { getRootZoom, rectToCssPx } from '@/utils/zoom';
 import {
   evaluateToolRequirement,
@@ -1762,6 +1808,71 @@ const router = useRouter();
 const orgStore = useOrganizationStore();
 const chatResources = useChatResourcesStore();
 const editorResources = useEditorResourcesStore();
+
+// ==================== MCP 工具（按工具授权）====================
+// 勾了 MCP 服务只决定"连什么"，具体给 agent 哪些工具由 allowed_tools 决定，
+// 和内置工具用同一份名单。这里把选中服务的工具拉回来，作为动态分组并进
+// 下面那个工具网格，复用同一个 checkbox group。
+//
+// 名字用后端返回的 registry_name（mcp_mail_send_email），不是服务自报的
+// send_email —— 两者之间的转换只在后端有实现，前端不复刻。
+// 一个服务一个状态。拉不到工具和拉到了零个工具是两回事，得分开记——
+// 前者要告诉用户“连不上”，后者才是真的没工具。
+type McpToolLoad =
+  | { status: 'loading' }
+  | { status: 'ok'; tools: MCPAgentTool[] }
+  | { status: 'error'; message: string };
+
+const mcpToolsByService = ref<Record<string, McpToolLoad>>({});
+
+// 判定规则都在 agentToolRequirements.ts 里，那边有测试盯着，也标着对应的后端
+// 实现——这三段计算必须跟后端逐字对齐，判错的后果是提示在该响的时候不响。
+const mcpCandidateServiceIds = computed<string[]>(() =>
+  computeMcpCandidateServiceIds(
+    formData.value?.config?.mcp_selection_mode,
+    formData.value?.config?.mcp_services,
+    editorResources.mcpServices || [],
+  ),
+);
+const mcpToolsLoading = computed(() =>
+  Object.values(mcpToolsByService.value).some(s => s.status === 'loading'),
+);
+
+// 每个服务各自落地，不等齐。用 Promise.all 等全部回来的话，一个卡住的
+// 服务会把所有健康服务的分组一起拖到它超时为止。
+async function loadMcpToolsForSelectedServices() {
+  const ids: string[] = mcpCandidateServiceIds.value;
+  if (!ids.length) {
+    mcpToolsByService.value = {};
+    return;
+  }
+
+  // 取消选掉的服务要从表里消失；已经拉回来的保留，避免重新勾选时闪一下。
+  const next: Record<string, McpToolLoad> = {};
+  for (const id of ids) {
+    next[id] = mcpToolsByService.value[id] || { status: 'loading' };
+  }
+  mcpToolsByService.value = next;
+
+  const inFlight = ids;
+  await Promise.all(
+    inFlight.map(async (id: string) => {
+      try {
+        const tools = await listMCPAgentTools(id);
+        // 期间可能又取消选了这个服务，那就不要把它写回去。
+        if (!(id in mcpToolsByService.value)) return;
+        mcpToolsByService.value = { ...mcpToolsByService.value, [id]: { status: 'ok', tools } };
+      } catch (e: any) {
+        if (!(id in mcpToolsByService.value)) return;
+        const message = e?.response?.data?.error?.message || e?.message || String(e);
+        mcpToolsByService.value = {
+          ...mcpToolsByService.value,
+          [id]: { status: 'error', message },
+        };
+      }
+    }),
+  );
+}
 
 const { t, locale: i18nLocale } = useI18n();
 
@@ -1926,7 +2037,7 @@ const showMcpServiceSelect = computed(() =>
   mcpOptions.value.length > 0 || (formData.value.config.mcp_services?.length ?? 0) > 0,
 );
 const webSearchProviderList = ref<WebSearchProviderEntity[]>([]);
-const skillOptions = ref<{ name: string; description: string }[]>([]);
+const skillOptions = ref<SkillInfo[]>([]);
 // 是否允许启用 Skills（取决于后端沙箱是否启用，disabled 时为 false；未请求前为 false 避免闪显）
 const skillsAvailable = ref(false);
 // 空间内的具名沙箱后端配置。始终包含当前已选中的那份，即使它已被删除——
@@ -2149,13 +2260,100 @@ const groupedAvailableTools = computed(() => {
     if (!map[g]) map[g] = [];
     map[g].push(tool);
   }
-  return toolGroups.value
+  const builtin = toolGroups.value
     .map(g => ({
       ...g,
       tools: map[g.key] || [],
     }))
     .filter(g => g.tools.length > 0);
+
+  // 每个选中的 MCP 服务一组，接在内置工具后面。用同一个网格是有意的：
+  // 对用户来说这就是一份工具清单，工具来自哪里是分组标题的事。
+  const services = editorResources.mcpServices || [];
+  const mcpGroups = mcpCandidateServiceIds.value
+    .map((id: string) => {
+      const state = mcpToolsByService.value[id];
+      const tools = state?.status === 'ok' ? state.tools : [];
+      const svc = services.find((x: any) => x.id === id);
+      const degraded = tools.some(t => t.name_degraded);
+      let warning = '';
+      if (state?.status === 'error') {
+        warning = t('agentEditor.tools.mcpLoadFailed', { message: state.message });
+      } else if (state?.status === 'loading') {
+        warning = t('agentEditor.tools.mcpLoading');
+      } else if (degraded) {
+        // 服务名被规范化成空串时，它的工具名会跟别的同类服务撞，撞了就
+        // 静默少工具。在这里说出来，比让人事后查日志强。
+        warning = t('agentEditor.tools.mcpNameDegraded');
+      }
+      return {
+        key: `mcp_${id}`,
+        label: svc?.name || id,
+        warning,
+        tools: tools.map(x => ({
+          value: x.registry_name,
+          label: x.tool_name,
+          description: x.description,
+          disabled: false,
+          disabledReason: undefined,
+          danger: false,
+          group: `mcp_${id}`,
+        })),
+      };
+    })
+    // 连不上的服务照样出一组，只是组里没工具、标题旁边写着原因。丢掉它
+    // 的话，用户在 MCP 服务里勾了、这里却什么都没有，还不知道为什么。
+    .filter(g => g.tools.length > 0 || g.warning);
+
+  return [...builtin, ...mcpGroups];
 });
+
+// ==================== 技能的工具依赖 ====================
+// 技能正文里点名调用的工具，如果这个 agent 没被授予，失败方式很难看：模型
+// 读完指令、发现工具不在、自己编一个答案出来，全程不报错。所以在保存前就说。
+//
+// 判定要跟后端 unmetSkillRequirements 一致：
+//   - 内置工具按名字直接在 allowed_tools 里找；
+//   - MCP 工具用服务自报的名字（send_email）去比，不是注册名
+//     （mcp_mail_send_email）—— 后者的前缀取决于本空间把服务叫什么。
+// 后缀匹配是不能用的：'email' 是 'mcp_mail_send_email' 的后缀，会把真的缺的
+// 工具判成有，那这个提示就正好在该响的时候不响。
+
+// 本 agent 实际能调的工具名，两种写法都收：注册名，以及 MCP 工具的原名。
+const callableToolNames = computed<Set<string>>(() => {
+  const loaded: Record<string, MCPAgentTool[]> = {};
+  for (const id of mcpCandidateServiceIds.value) {
+    const state = mcpToolsByService.value[id];
+    if (state?.status === 'ok') loaded[id] = state.tools;
+  }
+  return computeCallableToolNames(formData.value?.config?.allowed_tools, loaded);
+});
+
+// 能不能给出「缺哪些工具」的结论。要求名和授权名之间的映射只有服务的工具
+// 列表能给，有服务没拉到（还在拉 / 连不上）映射就是残缺的，此时说「缺」很
+// 可能是误报——工具其实勾了，只是核不出来。
+const skillRequirementsResolvable = computed(() =>
+  canResolveRequirements(
+    mcpCandidateServiceIds.value,
+    id => mcpToolsByService.value[id]?.status ?? 'loading',
+  ),
+);
+
+// skill 名 -> 它声明了但这个 agent 给不了的工具
+const unmetSkillTools = computed<Record<string, string[]>>(() => {
+  if (!skillRequirementsResolvable.value) return {};
+  return computeUnmetSkillTools(
+    skillOptions.value,
+    computeEnabledSkillNames(
+      skillsSelectionMode.value,
+      skillOptions.value,
+      formData.value?.config?.selected_skills,
+    ),
+    callableToolNames.value,
+  );
+});
+
+const unmetSkillCount = computed(() => Object.keys(unmetSkillTools.value).length);
 
 // ==================== 有效工具预览 ====================
 // 最终运行时智能体实际能使用的工具集合（仅做预览展示）
@@ -2583,6 +2781,14 @@ const syncActivePromptAnchor = () => {
 };
 
 watch(promptNavItems, syncActivePromptAnchor);
+
+// 候选服务变了就重拉工具列表：勾掉一个服务、或者把模式从 all 改成 selected，
+// 它的工具组都要跟着变。
+watch(
+  mcpCandidateServiceIds,
+  () => { loadMcpToolsForSelectedServices(); },
+  { deep: true, immediate: true },
+);
 
 watch(currentSection, (section) => {
   if (section === 'prompts') {
@@ -5615,6 +5821,35 @@ const handleSave = async () => {
   font-size: 12px;
   color: var(--td-text-color-secondary);
   line-height: 1.5;
+}
+
+.skill-missing-tools {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 2px 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--td-warning-color);
+  background: var(--td-warning-color-light);
+  border-radius: 3px;
+}
+
+.skills-missing-summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--td-warning-color);
+  background: var(--td-warning-color-light);
+  border-radius: 6px;
+}
+
+.skills-missing-summary p {
+  margin: 0;
 }
 
 .skill-info-box {

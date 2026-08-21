@@ -18,6 +18,15 @@ const (
 	MaxNameLength        = 64
 	MaxDescriptionLength = 1024
 	SkillFileName        = "SKILL.md"
+
+	// MaxToolNameLength bounds a requires_tools entry. Values are matched
+	// against tool names, so anything longer is a typo rather than a
+	// requirement that will ever be satisfied.
+	MaxToolNameLength = 128
+	// MaxRequiresTools bounds how many tools one skill may declare. A skill
+	// needing more than this is describing a whole toolbox, and the warning
+	// it produces would be unreadable.
+	MaxRequiresTools = 32
 )
 
 // Reserved words that cannot be used in skill names
@@ -25,6 +34,12 @@ var reservedWords = []string{"anthropic", "claude"}
 
 // namePattern validates skill names: unicode letters, numbers only
 var namePattern = regexp.MustCompile(`^[\p{L}\p{N}-]+$`)
+
+// toolNamePattern validates requires_tools entries. Deliberately looser than
+// any single tool naming scheme — it only rules out values that cannot be a
+// tool name at all, so a skill is never rejected for depending on a tool this
+// build has not heard of yet.
+var toolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 
 // xmlTagPattern detects XML tags in content
 var xmlTagPattern = regexp.MustCompile(`<[^>]+>`)
@@ -43,6 +58,18 @@ type Skill struct {
 	BasePath string // Absolute path to the skill directory
 	FilePath string // Absolute path to SKILL.md
 
+	// RequiresTools names the tools this skill's instructions call, using the
+	// names the tools report for themselves — "send_email", not the registry's
+	// "mcp_mail_send_email", which depends on what this workspace happens to
+	// have called the service.
+	//
+	// It is a claim by the skill author, checked when an agent is configured.
+	// Nothing enforces it at run time: a skill that turns out not to need a
+	// declared tool still works, and the agent is never blocked from starting.
+	// Absent means the author made no claim, which is not the same as "needs
+	// nothing" — most skills predate the field.
+	RequiresTools []string `yaml:"requires_tools"`
+
 	// Instructions (Level 2) - loaded on demand
 	Instructions string // The main body of SKILL.md (after frontmatter)
 	Loaded       bool   // Whether Level 2 instructions have been loaded
@@ -54,6 +81,11 @@ type SkillMetadata struct {
 	Name        string
 	Description string
 	BasePath    string // Path to skill directory for later loading
+
+	// RequiresTools travels with Level 1 because the check it feeds — does
+	// this agent grant what the skill calls? — happens while configuring the
+	// agent, long before anything loads the skill body.
+	RequiresTools []string
 }
 
 // SkillFile represents an additional file within a skill directory (Level 3)
@@ -96,15 +128,34 @@ func (s *Skill) Validate() error {
 		return errors.New("skill description cannot contain XML tags")
 	}
 
+	// Validate declared tool requirements
+	if len(s.RequiresTools) > MaxRequiresTools {
+		return fmt.Errorf("requires_tools lists %d tools, more than the maximum of %d",
+			len(s.RequiresTools), MaxRequiresTools)
+	}
+	for _, tool := range s.RequiresTools {
+		if tool == "" {
+			return errors.New("requires_tools contains an empty tool name")
+		}
+		if len(tool) > MaxToolNameLength {
+			return fmt.Errorf("requires_tools entry %q exceeds maximum length of %d characters",
+				tool, MaxToolNameLength)
+		}
+		if !toolNamePattern.MatchString(tool) {
+			return fmt.Errorf("requires_tools entry %q is not a usable tool name", tool)
+		}
+	}
+
 	return nil
 }
 
 // ToMetadata converts a Skill to its lightweight metadata representation
 func (s *Skill) ToMetadata() *SkillMetadata {
 	return &SkillMetadata{
-		Name:        s.Name,
-		Description: s.Description,
-		BasePath:    s.BasePath,
+		Name:          s.Name,
+		Description:   s.Description,
+		BasePath:      s.BasePath,
+		RequiresTools: s.RequiresTools,
 	}
 }
 

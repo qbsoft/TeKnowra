@@ -244,6 +244,7 @@ func (s *agentService) CreateAgentEngine(
 			engine.SetSkillsManager(skillsManager)
 			logger.Infof(ctx, "Skills manager initialized with %d skills",
 				len(skillsManager.GetAllMetadata()))
+			logUnmetSkillRequirements(ctx, toolRegistry, skillsManager.GetAllMetadata())
 		}
 	}
 
@@ -324,6 +325,7 @@ func (s *agentService) registerMCPTools(
 		} else {
 			logger.Infof(ctx, "Registered %d MCP tool(s) from %d enabled service(s)", registered, len(enabledServices))
 		}
+		applyMCPToolAllowlist(ctx, toolRegistry, config)
 	}
 }
 

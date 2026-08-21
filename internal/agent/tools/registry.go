@@ -201,3 +201,19 @@ func (r *ToolRegistry) Cleanup(ctx context.Context) {
 		}
 	}
 }
+
+// Unregister removes a tool so the model never sees it.
+//
+// Used to narrow MCP tools down to an agent's allowed list after they have been
+// registered; see applyMCPToolAllowlist. Removing afterwards keeps that policy
+// out of the registration path, which is upstream code with one call site.
+//
+// Removing a name that was never registered is a no-op — callers sweep a list
+// they did not build and should not have to check first.
+// Not synchronised, matching RegisterTool: the registry is built by one
+// goroutine while the engine is assembled and is read-only from the first LLM
+// call onward. Adding a lock here alone would suggest a concurrency guarantee
+// the rest of the type does not make.
+func (r *ToolRegistry) Unregister(name string) {
+	delete(r.tools, name)
+}
