@@ -1017,6 +1017,8 @@ export default {
       selectSkills: 'Select Skills',
       selectSkillsDesc: 'Choose which Skills to enable',
       noSkillsAvailable: 'No preloaded Skills available',
+      skillMissingTools: "Missing tools: {tools}. The skill still runs, but improvises past the missing calls instead of failing.",
+      skillMissingToolsNamed: "Skill '{skill}' is missing tools: {tools}. It still runs, but improvises past the missing calls instead of failing.",
       sandboxConfig: 'Sandbox backend',
       sandboxConfigDesc: 'Choose which sandbox backend this agent\'s skill scripts execute in.',
       sandboxBackend: 'Sandbox backend',

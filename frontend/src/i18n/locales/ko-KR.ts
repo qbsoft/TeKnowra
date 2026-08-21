@@ -5467,6 +5467,8 @@ export default {
       selectSkills: 'Skills 선택',
       selectSkillsDesc: '활성화할 Skills 선택',
       noSkillsAvailable: '사전 설치된 Skills가 없습니다',
+      skillMissingTools: '누락된 도구: {tools}. 스킬은 그대로 실행되지만 해당 호출 지점에서 오류 없이 임의로 답합니다.',
+      skillMissingToolsNamed: '스킬 「{skill}」에 누락된 도구: {tools}. 그대로 실행되지만 해당 호출 지점에서 오류 없이 임의로 답합니다.',
       sandboxConfig: 'Sandbox backend',
       sandboxConfigDesc: 'Choose which sandbox backend this agent\'s skill scripts execute in.',
       sandboxBackend: 'Sandbox backend',

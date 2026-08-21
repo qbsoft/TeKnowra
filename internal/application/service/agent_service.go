@@ -244,6 +244,7 @@ func (s *agentService) CreateAgentEngine(
 			engine.SetSkillsManager(skillsManager)
 			logger.Infof(ctx, "Skills manager initialized with %d skills",
 				len(skillsManager.GetAllMetadata()))
+			logUnmetSkillRequirements(ctx, toolRegistry, skillsManager.GetAllMetadata())
 		}
 	}
 

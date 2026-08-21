@@ -600,3 +600,20 @@ func SerializeMCPToolResult(result *types.ToolResult) (string, error) {
 
 	return output, nil
 }
+
+// SourceToolName returns the name the MCP server itself reports for this tool,
+// without the "mcp_<service>_" prefix Name() adds.
+//
+// A skill that says it needs "send_email" is naming this, not the registry
+// name: the prefix is built from whatever this workspace happened to call the
+// service, so it cannot appear in a portable skill file. Recovering the name by
+// stripping a prefix off Name() is not possible — a sanitised service name may
+// itself contain underscores, so "mcp_crm_review_mcp_get_review_summary" has no
+// unambiguous split. Hence an accessor rather than string surgery at the call
+// site.
+func (t *MCPTool) SourceToolName() string {
+	if t == nil || t.mcpTool == nil {
+		return ""
+	}
+	return t.mcpTool.Name
+}

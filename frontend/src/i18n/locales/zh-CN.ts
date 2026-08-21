@@ -5469,6 +5469,8 @@ export default {
       selectSkills: '选择 Skills',
       selectSkillsDesc: '选择要启用的 Skills',
       noSkillsAvailable: '暂无预装 Skills',
+      skillMissingTools: '缺少工具：{tools}。该技能会照常运行，但走到调用这一步会自己编，不会报错。',
+      skillMissingToolsNamed: '技能「{skill}」缺少工具：{tools}。它会照常运行，但走到调用这一步会自己编，不会报错。',
       sandboxConfig: '沙箱后端',
       sandboxConfigDesc: '选择该智能体的技能脚本在哪个沙箱后端中执行。',
       sandboxBackend: '沙箱后端',

@@ -25,6 +25,12 @@ func NewSkillHandler(skillService interfaces.SkillService) *SkillHandler {
 type SkillInfoResponse struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	// RequiresTools names the tools the skill's instructions call, as their
+	// own servers name them. The agent editor uses it to say "this skill
+	// needs send_email and this agent was not given it" while the agent is
+	// being configured, instead of letting the model discover it mid-answer.
+	// Omitted for the skills — currently most of them — that declare nothing.
+	RequiresTools []string `json:"requires_tools,omitempty"`
 }
 
 // ListSkills godoc
@@ -52,8 +58,9 @@ func (h *SkillHandler) ListSkills(c *gin.Context) {
 	var response []SkillInfoResponse
 	for _, meta := range skillsMetadata {
 		response = append(response, SkillInfoResponse{
-			Name:        meta.Name,
-			Description: meta.Description,
+			Name:          meta.Name,
+			Description:   meta.Description,
+			RequiresTools: meta.RequiresTools,
 		})
 	}
 
