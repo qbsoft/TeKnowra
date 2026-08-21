@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/Tencent/WeKnora/internal/agent/skills"
 	"github.com/Tencent/WeKnora/internal/agent/tools"
@@ -112,6 +113,21 @@ func TestLogUnmetSkillRequirements_NamesTheSkillAndTheTools(t *testing.T) {
 	for _, want := range []string{"tyer-contract-review", "submit_review_finding", "get_review_checklist"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("log line %q does not mention %q", line, want)
+		}
+	}
+}
+
+// Log lines travel through pipelines that do not all agree on encoding. A
+// Windows console at the GBK codepage turned an em dash in this message into
+// mojibake, which is how the character got noticed at all.
+func TestUnmetRequirementLineIsASCII(t *testing.T) {
+	line := formatUnmetRequirement(skillRequirementGap{
+		Skill: "s", Missing: []string{"t"},
+	})
+	for i, r := range line {
+		if r > unicode.MaxASCII {
+			t.Errorf("log line holds %q at byte %d; keep it ASCII so it survives "+
+				"a non-UTF-8 console: %q", r, i, line)
 		}
 	}
 }

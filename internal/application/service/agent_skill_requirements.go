@@ -96,10 +96,14 @@ func unmetSkillRequirements(
 // formatUnmetRequirement renders one gap. Kept separate so a test can pin what
 // the line actually says: this text is the entire product of the check, and a
 // line that names the skill but not the tools sends the reader nowhere.
+//
+// ASCII only, deliberately. Log lines travel through pipelines that do not all
+// agree on encoding — a Windows console at the GBK codepage turns an em dash
+// into mojibake, which is how this was found.
 func formatUnmetRequirement(gap skillRequirementGap) string {
 	return fmt.Sprintf(
 		"skill %q declares requires_tools that this agent cannot call: %s "+
-			"— the skill will run and improvise around the missing tools rather than fail",
+			"- the skill will run and improvise around the missing tools rather than fail",
 		gap.Skill, strings.Join(gap.Missing, ", "))
 }
 
