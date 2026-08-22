@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -37,9 +38,15 @@ func (f *fakeSessions) GetSessionByID(_ context.Context, _ uint64, _ string) (*t
 }
 
 func (f *fakeSessions) CreateSession(_ context.Context, s *types.Session) (*types.Session, error) {
-	f.created = append(f.created, s)
-	f.existing = s
-	return s, nil
+	// types.Session.BeforeCreate overwrites whatever id it is handed. Mirroring
+	// that here is the point of this fake: handing the caller's own id back
+	// makes the job's id look like it survives into the session, and believing
+	// that is what left one session behind per run.
+	stored := *s
+	stored.ID = fmt.Sprintf("session-generated-%d", len(f.created)+1)
+	f.created = append(f.created, &stored)
+	f.existing = &stored
+	return &stored, nil
 }
 
 func (f *fakeSessions) AgentQA(ctx context.Context, req *types.QARequest, bus *event.EventBus) error {
@@ -53,14 +60,29 @@ func (f *fakeSessions) AgentQA(ctx context.Context, req *types.QARequest, bus *e
 type fakeMessages struct {
 	interfaces.MessageService
 	created []*types.Message
+	// updated holds the messages finishMessage closed out. A run that never
+	// updates its assistant message leaves it stuck at "in progress", and the
+	// front end reports a broken stream when the session is opened.
+	updated []*types.Message
 }
 
 func (f *fakeMessages) CreateMessage(_ context.Context, m *types.Message) (*types.Message, error) {
 	if m.ID == "" {
 		m.ID = uuid.New().String()
 	}
-	f.created = append(f.created, m)
+	// Store a copy, not the caller's pointer. A real repository hands back a
+	// row, so what was written stays written; keeping the pointer means
+	// finishMessage's later mutation rewrites history, and an assertion about
+	// what the placeholder looked like silently becomes an assertion about the
+	// finished message.
+	stored := *m
+	f.created = append(f.created, &stored)
 	return m, nil
+}
+
+func (f *fakeMessages) UpdateMessage(_ context.Context, m *types.Message) error {
+	f.updated = append(f.updated, m)
+	return nil
 }
 
 type fakeAgents struct {
@@ -101,6 +123,7 @@ func TestAgentExec_AccumulatesStreamedAnswer(t *testing.T) {
 		sessions: sessions,
 		messages: &fakeMessages{},
 		agents:   &fakeAgents{agent: &types.CustomAgent{ID: "agent-1"}},
+		repo:     &fakeCronRepo{},
 	}
 
 	out, err := exec.Execute(context.Background(), agentJob())
@@ -126,6 +149,7 @@ func TestAgentExec_CapturesErrorEvent(t *testing.T) {
 		sessions: sessions,
 		messages: &fakeMessages{},
 		agents:   &fakeAgents{agent: &types.CustomAgent{ID: "agent-1"}},
+		repo:     &fakeCronRepo{},
 	}
 
 	if _, err := exec.Execute(context.Background(), agentJob()); err == nil {
@@ -137,10 +161,12 @@ func TestAgentExec_CapturesErrorEvent(t *testing.T) {
 // leave 288 sessions a day behind.
 func TestAgentExec_ReusesOneSessionPerJob(t *testing.T) {
 	sessions := &fakeSessions{}
+	repo := &fakeCronRepo{}
 	exec := &agentExecutor{
 		sessions: sessions,
 		messages: &fakeMessages{},
 		agents:   &fakeAgents{agent: &types.CustomAgent{ID: "agent-1"}},
+		repo:     repo,
 	}
 	job := agentJob()
 
@@ -153,8 +179,18 @@ func TestAgentExec_ReusesOneSessionPerJob(t *testing.T) {
 	if len(sessions.created) != 1 {
 		t.Fatalf("created %d sessions across 3 runs, want 1", len(sessions.created))
 	}
-	if got := sessions.created[0].ID; got != job.ID {
-		t.Errorf("session id = %q, want the job id %q", got, job.ID)
+
+	// Reuse hangs entirely on the job remembering the id the session service
+	// actually assigned. Asserting that the job's own id ended up on the
+	// session would pass against a fake and fail against the database, which
+	// is how this went unnoticed until 80 runs had left 80 sessions behind.
+	assigned := sessions.created[0].ID
+	if got := repo.bound[job.ID]; got != assigned {
+		t.Errorf("job bound to session %q, want the assigned id %q", got, assigned)
+	}
+	if job.SessionID != assigned {
+		t.Errorf("in-memory job.SessionID = %q, want %q — the next run would start over",
+			job.SessionID, assigned)
 	}
 }
 
@@ -167,6 +203,7 @@ func TestAgentExec_RecordsBothTurns(t *testing.T) {
 		sessions: &fakeSessions{},
 		messages: messages,
 		agents:   &fakeAgents{agent: &types.CustomAgent{ID: "agent-1"}},
+		repo:     &fakeCronRepo{},
 	}
 	job := agentJob()
 
@@ -187,6 +224,16 @@ func TestAgentExec_RecordsBothTurns(t *testing.T) {
 	if user.RequestID == "" || user.RequestID != assistant.RequestID {
 		t.Error("the two turns are not tied together by a shared request id")
 	}
+
+	// Created incomplete is only half of it: a placeholder that is never
+	// closed out leaves the session looking like a stream that died, and the
+	// front end says so when the conversation is opened.
+	if len(messages.updated) != 1 {
+		t.Fatalf("updated %d messages, want the assistant turn closed out once", len(messages.updated))
+	}
+	if done := messages.updated[0]; done.ID != assistant.ID || !done.IsCompleted {
+		t.Errorf("closed out %+v, want message %s marked complete", done, assistant.ID)
+	}
 }
 
 // A job with no agent bound cannot run in agent mode, and saying so plainly
@@ -196,6 +243,7 @@ func TestAgentExec_RejectsJobWithoutAgent(t *testing.T) {
 		sessions: &fakeSessions{},
 		messages: &fakeMessages{},
 		agents:   &fakeAgents{agent: &types.CustomAgent{ID: "agent-1"}},
+		repo:     &fakeCronRepo{},
 	}
 	job := agentJob()
 	job.AgentID = ""
@@ -215,6 +263,7 @@ func TestAgentExec_RejectsMissingAgent(t *testing.T) {
 		sessions: &fakeSessions{},
 		messages: &fakeMessages{},
 		agents:   &fakeAgents{agent: nil},
+		repo:     &fakeCronRepo{},
 	}
 
 	if _, err := exec.Execute(context.Background(), agentJob()); err == nil {
@@ -228,6 +277,7 @@ func TestAgentExec_EmptyAnswerIsNotAnError(t *testing.T) {
 		sessions: &fakeSessions{},
 		messages: &fakeMessages{},
 		agents:   &fakeAgents{agent: &types.CustomAgent{ID: "agent-1"}},
+		repo:     &fakeCronRepo{},
 	}
 
 	out, err := exec.Execute(context.Background(), agentJob())
@@ -248,6 +298,7 @@ func TestAgentExec_PassesPromptAndAgent(t *testing.T) {
 		sessions: sessions,
 		messages: &fakeMessages{},
 		agents:   &fakeAgents{agent: agent},
+		repo:     &fakeCronRepo{},
 	}
 	job := agentJob()
 

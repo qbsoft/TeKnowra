@@ -57,6 +57,10 @@ func (f *fakeEnqueuer) accepted() int {
 type fakeCronRepo struct {
 	mu   sync.Mutex
 	jobs map[string]*types.AgentCronJob
+	// bound records BindSession calls. The executor tests assert on it: a job
+	// that does not remember the id the session service assigned starts a new
+	// session on every run.
+	bound map[string]string
 }
 
 func newFakeCronRepo(jobs ...*types.AgentCronJob) *fakeCronRepo {
@@ -89,7 +93,15 @@ func (r *fakeCronRepo) ReleaseClaim(context.Context, string) error             {
 func (r *fakeCronRepo) SweepStaleClaims(context.Context, time.Time) ([]string, error) {
 	return nil, nil
 }
-func (r *fakeCronRepo) BindSession(context.Context, string, string) error { return nil }
+func (r *fakeCronRepo) BindSession(_ context.Context, id, sessionID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.bound == nil {
+		r.bound = map[string]string{}
+	}
+	r.bound[id] = sessionID
+	return nil
+}
 
 func (r *fakeCronRepo) RecordResult(context.Context, string, interfaces.CronRunResult) error {
 	return nil
