@@ -74,6 +74,11 @@ func (s *sessionService) AgentQA(
 	if req.CustomAgent != nil && req.CustomAgent.Config.VLMModelID != "" {
 		agentConfig.VLMModelID = req.CustomAgent.Config.VLMModelID
 	}
+	// Runtime-only: lets the cronjob tool record which agent a scheduled job
+	// should run as.
+	if req.CustomAgent != nil {
+		agentConfig.AgentID = req.CustomAgent.ID
+	}
 
 	// Resolve model ID using shared helper (AgentQA requires a model, so error if not found)
 	effectiveModelID, err := s.resolveChatModelID(ctx, req, agentConfig.KnowledgeBases, agentConfig.KnowledgeIDs)

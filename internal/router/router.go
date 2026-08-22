@@ -50,6 +50,7 @@ type RouterParams struct {
 	TenantInvitationHandler      *handler.TenantInvitationHandler
 	AuditLogHandler              *handler.AuditLogHandler
 	MCPAgentToolsHandler         *handler.MCPAgentToolsHandler
+	AgentCronHandler             *handler.AgentCronHandler
 	AuditLogService              interfaces.AuditLogService
 	ChunkHandler                 *handler.ChunkHandler
 	SessionHandler               *session.Handler
@@ -231,6 +232,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 		RegisterTenantRoutes(v1, params.TenantHandler, params.TenantMemberHandler, params.TenantInvitationHandler, params.AuditLogHandler, rbacGuards)
 		RegisterMyInvitationRoutes(v1, params.TenantInvitationHandler)
 		RegisterMCPAgentToolsRoutes(v1, params.MCPAgentToolsHandler, rbacGuards)
+		RegisterAgentCronRoutes(v1, params.AgentCronHandler)
 		RegisterKnowledgeBaseRoutes(v1, params.KBHandler, rbacGuards)
 		RegisterKnowledgeBaseActivityRoutes(v1, params.AuditLogHandler, rbacGuards)
 		// KB-scoped image proxy: lets tenants render images embedded in

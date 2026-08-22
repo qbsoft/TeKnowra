@@ -111,6 +111,7 @@ type agentService struct {
 	sandboxResolver       sandbox.TenantSandboxResolver
 	sandboxPinner         *SessionSandboxPinner
 	sandboxPolicy         WorkspaceSandboxPolicy
+	agentCronManager      interfaces.AgentCronManager
 }
 
 // NewAgentService creates a new agent service
@@ -138,6 +139,7 @@ func NewAgentService(
 	sandboxResolver sandbox.TenantSandboxResolver,
 	sandboxPinner *SessionSandboxPinner,
 	sandboxPolicy WorkspaceSandboxPolicy,
+	agentCronManager interfaces.AgentCronManager,
 ) interfaces.AgentService {
 	return &agentService{
 		cfg:                   cfg,
@@ -163,6 +165,7 @@ func NewAgentService(
 		sandboxResolver:       sandboxResolver,
 		sandboxPinner:         sandboxPinner,
 		sandboxPolicy:         sandboxPolicy,
+		agentCronManager:      agentCronManager,
 	}
 }
 
@@ -637,6 +640,14 @@ func (s *agentService) registerTools(
 			toolToRegister = tools.NewSequentialThinkingTool()
 		case tools.ToolTodoWrite:
 			toolToRegister = tools.NewTodoWriteTool()
+		case tools.ToolCronjob:
+			// Opt-in only: this tool spends tokens on a timer, so it is not in
+			// DefaultAllowedTools and an agent must ask for it explicitly.
+			if s.agentCronManager == nil {
+				logger.Warnf(ctx, "cronjob tool requested but scheduling is disabled; skipping")
+				continue
+			}
+			toolToRegister = tools.NewCronjobTool(s.agentCronManager, config.AgentID, sessionID)
 		case tools.ToolKnowledgeSearch:
 			toolToRegister = tools.NewKnowledgeSearchTool(
 				s.knowledgeBaseService,

@@ -46,6 +46,10 @@ const (
 	// the enrichment pool because it is a background LLM call whose latency
 	// nobody is waiting on.
 	QueueMemory = "memory"
+	// QueueAgentCron carries user-scheduled agent tasks. Maintenance pool: a
+	// cron run can take minutes and must not pin capacity meant for the
+	// user-facing pipeline.
+	QueueAgentCron = "agent_cron"
 )
 
 // QueueDefinition is the single source of truth for queue topology. Worker
@@ -80,6 +84,7 @@ var queueDefinitions = []QueueDefinition{
 	{Name: QueueQuestion, Pool: WorkerPoolEnrichment, Weight: 1, SharedWeight: 1, TaskTypes: []string{TypeQuestionGeneration}},
 	{Name: QueueMemory, Pool: WorkerPoolEnrichment, Weight: 1, SharedWeight: 1, TaskTypes: []string{TypeMemoryExtract}},
 	{Name: QueueSync, Pool: WorkerPoolMaintenance, Weight: 2, TaskTypes: []string{TypeDataSourceSync}},
+	{Name: QueueAgentCron, Pool: WorkerPoolMaintenance, Weight: 2, TaskTypes: []string{TypeAgentCronRun}},
 	{Name: QueueMaintenance, Pool: WorkerPoolMaintenance, Weight: 1, TaskTypes: []string{
 		TypeFAQImport, TypeKBClone, TypeIndexDelete, TypeKBDelete,
 		TypeKnowledgeListDelete, TypeKnowledgeListReparse, TypeKnowledgeMove,
@@ -254,6 +259,7 @@ const (
 	TypeTemporaryDocumentProcess = "temporary_document:process" // 会话临时文档解析任务
 	// TypeMemoryExtract 长期记忆抽取任务（会话轮次防抖后异步执行）
 	TypeMemoryExtract = "memory:extract"
+	TypeAgentCronRun  = "agent_cron:run" // 用户定义的定时 agent 任务
 )
 
 // MemoryExtractPayload carries everything the background distillation task
@@ -561,4 +567,14 @@ type KBCloneProgress struct {
 	Error     string            `json:"error"`      // 错误信息
 	CreatedAt int64             `json:"created_at"` // 任务创建时间
 	UpdatedAt int64             `json:"updated_at"` // 最后更新时间
+}
+
+// AgentCronRunPayload is the asynq payload for one scheduled agent run.
+//
+// Deliberately only identifiers: the worker re-reads the job from the DB so a
+// task sitting in the queue cannot execute a prompt or a delivery target that
+// the user has since edited or deleted.
+type AgentCronRunPayload struct {
+	JobID    string `json:"job_id"`
+	TenantID uint64 `json:"tenant_id"`
 }

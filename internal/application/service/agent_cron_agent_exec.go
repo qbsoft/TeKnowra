@@ -1,0 +1,325 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/Tencent/WeKnora/internal/agent/tools"
+	"github.com/Tencent/WeKnora/internal/event"
+	"github.com/Tencent/WeKnora/internal/logger"
+	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
+	"github.com/google/uuid"
+)
+
+// agentRunTimeout bounds one scheduled agent run.
+//
+// Generous, because a job that searches a knowledge base and calls a few tools
+// legitimately takes minutes; but bounded, because nobody is watching and a
+// wedged run would otherwise hold its claim until the sweeper notices.
+const agentRunTimeout = 15 * time.Minute
+
+// agentExecutor runs a job's prompt as a real agent turn.
+//
+// It reuses the same path as a human conversation (SessionService.AgentQA)
+// rather than driving the engine directly. That means skills, tools, MCP
+// services, retrieval and the model config all behave exactly as they do when
+// the same agent is used interactively — a scheduled run is not a second,
+// subtly-different execution mode that drifts away from the real one.
+type agentExecutor struct {
+	sessions interfaces.SessionService
+	messages interfaces.MessageService
+	agents   interfaces.CustomAgentService
+	repo     interfaces.AgentCronJobRepository
+}
+
+func (e *agentExecutor) Execute(ctx context.Context, job *types.AgentCronJob) (string, error) {
+	if job.AgentID == "" {
+		return "", errors.New("这个任务没有绑定 agent，无法以 agent 模式执行")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, agentRunTimeout)
+	defer cancel()
+
+	agent, err := e.agents.GetAgentByIDAndTenant(ctx, job.AgentID, job.TenantID)
+	if err != nil {
+		return "", fmt.Errorf("找不到这个任务绑定的 agent：%w", err)
+	}
+	if agent == nil {
+		return "", errors.New("这个任务绑定的 agent 已经不存在了")
+	}
+	agent = withoutSelfScheduling(agent)
+
+	session, err := e.ensureSession(ctx, job)
+	if err != nil {
+		return "", err
+	}
+
+	requestID := uuid.New().String()
+
+	// The prompt is stored as a user message so the run shows up as a normal
+	// turn in the session. Without it the assistant reply would hang under a
+	// question nobody asked.
+	userMsg, err := e.messages.CreateMessage(ctx, &types.Message{
+		SessionID:   session.ID,
+		Role:        "user",
+		Content:     job.Prompt,
+		RequestID:   requestID,
+		CreatedAt:   time.Now(),
+		IsCompleted: true,
+		Channel:     "cron",
+	})
+	if err != nil {
+		return "", fmt.Errorf("创建任务消息失败：%w", err)
+	}
+
+	assistantMsg, err := e.messages.CreateMessage(ctx, &types.Message{
+		SessionID:   session.ID,
+		Role:        "assistant",
+		RequestID:   requestID,
+		CreatedAt:   time.Now(),
+		IsCompleted: false,
+		Channel:     "cron",
+	})
+	if err != nil {
+		return "", fmt.Errorf("创建回复占位失败：%w", err)
+	}
+
+	answer, err := e.runAndCollect(ctx, session, agent, job.Prompt, assistantMsg.ID, userMsg.ID)
+
+	// Close out the assistant message, whatever happened.
+	//
+	// Interactively this is the SSE handler's job (see
+	// handler/session/agent_stream_handler.go), and that handler never runs for
+	// a scheduled turn. Left undone, the message stays is_completed = false
+	// forever: opening the session makes the UI try to attach to a stream that
+	// finished hours ago, and it answers HTTP 404.
+	e.finishMessage(ctx, assistantMsg, answer, err)
+
+	if err != nil {
+		return answer, err
+	}
+	if strings.TrimSpace(answer) == "" {
+		// Not an error: an agent that finds nothing worth saying is the
+		// watchdog case, same as an empty HTTP body.
+		return "", nil
+	}
+	return answer, nil
+}
+
+// finishMessage marks the assistant turn done and stores what it produced.
+//
+// Best-effort: the run itself already succeeded or failed on its own terms, and
+// failing to tidy the transcript must not turn a good run into a bad one. It is
+// logged loudly because the symptom otherwise shows up much later, as a session
+// that will not open.
+func (e *agentExecutor) finishMessage(
+	ctx context.Context, msg *types.Message, answer string, runErr error,
+) {
+	// The run may have been cancelled; the tidy-up still has to happen.
+	ctx = context.WithoutCancel(ctx)
+
+	msg.IsCompleted = true
+	if strings.TrimSpace(msg.Content) == "" {
+		switch {
+		case runErr != nil:
+			msg.Content = fmt.Sprintf("（本次定时执行失败：%v）", runErr)
+		case strings.TrimSpace(answer) != "":
+			msg.Content = answer
+		default:
+			msg.Content = "（本次执行没有产出内容）"
+		}
+	}
+
+	if err := e.messages.UpdateMessage(ctx, msg); err != nil {
+		logger.Errorf(ctx, "[AgentCron] could not close out message %s: %v; "+
+			"这条消息会一直停在未完成状态，打开会话时前端会报流式连接失败", msg.ID, err)
+	}
+}
+
+// ensureSession returns the job's own conversation, creating it on first run.
+//
+// One session per job, not one per run. A run every five minutes would
+// otherwise leave 288 sessions a day behind, and the user would have no single
+// place to read what the job has been saying. Reusing it means the job's whole
+// history is one readable thread.
+//
+// Whether a run can SEE that history is the agent's own MultiTurnEnabled
+// setting, deliberately not overridden here: a scheduled run should behave
+// like the same agent does interactively.
+func (e *agentExecutor) ensureSession(ctx context.Context, job *types.AgentCronJob) (*types.Session, error) {
+	// Reuse the session this job was bound to on its first run, so the whole
+	// history reads as one thread.
+	if job.SessionID != "" {
+		if existing, err := e.sessions.GetSessionByID(ctx, job.TenantID, job.SessionID); err == nil && existing != nil {
+			return existing, nil
+		}
+		// Bound to a session that no longer exists (the user deleted it).
+		// Fall through and make a new one rather than failing the run.
+	}
+
+	title := job.Name
+	if title == "" {
+		title = "定时任务"
+	}
+	session, err := e.sessions.CreateSession(ctx, &types.Session{
+		Title:       title,
+		Description: "定时任务的执行记录",
+		TenantID:    job.TenantID,
+		UserID:      job.CreatorUserID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("创建任务会话失败：%w", err)
+	}
+
+	// The id is only knowable now — Session.BeforeCreate overwrites whatever
+	// it is handed — so bind it to the job before the next run comes round.
+	// Failing to persist it is not fatal to this run, but every later run
+	// would start another session, so it is worth shouting about.
+	if err := e.repo.BindSession(ctx, job.ID, session.ID); err != nil {
+		logger.Errorf(ctx, "[AgentCron] job=%s could not remember its session %s: %v; "+
+			"每次执行都会另起一个会话", job.ID, session.ID, err)
+	}
+	job.SessionID = session.ID
+	return session, nil
+}
+
+// runAndCollect performs the turn and returns the assistant's final answer.
+func (e *agentExecutor) runAndCollect(
+	ctx context.Context,
+	session *types.Session,
+	agent *types.CustomAgent,
+	query, assistantMessageID, userMessageID string,
+) (string, error) {
+	var (
+		mu     sync.Mutex
+		buf    strings.Builder
+		bufErr string
+	)
+
+	eventBus := event.NewEventBus()
+
+	// The final answer arrives in chunks; accumulate rather than keeping the
+	// last one.
+	eventBus.On(event.EventAgentFinalAnswer, func(_ context.Context, evt event.Event) error {
+		data, ok := evt.Data.(event.AgentFinalAnswerData)
+		if !ok {
+			if ptr, okPtr := evt.Data.(*event.AgentFinalAnswerData); okPtr {
+				data = *ptr
+			} else {
+				return nil
+			}
+		}
+		mu.Lock()
+		buf.WriteString(data.Content)
+		mu.Unlock()
+		return nil
+	})
+
+	// Errors surface as events rather than as a return value on some paths, so
+	// capture them or a failed run would be recorded as an empty success.
+	eventBus.On(event.EventError, func(_ context.Context, evt event.Event) error {
+		mu.Lock()
+		if bufErr == "" {
+			bufErr = fmt.Sprintf("%v", evt.Data)
+		}
+		mu.Unlock()
+		return nil
+	})
+
+	req := &types.QARequest{
+		Session:            session,
+		Query:              query,
+		AssistantMessageID: assistantMessageID,
+		UserMessageID:      userMessageID,
+		CustomAgent:        agent,
+	}
+
+	runErr := e.sessions.AgentQA(ctx, req, eventBus)
+
+	mu.Lock()
+	answer := buf.String()
+	eventErr := bufErr
+	mu.Unlock()
+
+	if runErr != nil {
+		return answer, runErr
+	}
+	if eventErr != "" {
+		return answer, errors.New(eventErr)
+	}
+	return answer, nil
+}
+
+// newAgentExecutor wires the agent execution mode, or reports why it cannot be
+// wired so the caller can degrade instead of panicking at 3am.
+func newAgentExecutor(
+	sessions interfaces.SessionService,
+	messages interfaces.MessageService,
+	agents interfaces.CustomAgentService,
+	repo interfaces.AgentCronJobRepository,
+) (cronExecutor, error) {
+	if sessions == nil || messages == nil || agents == nil || repo == nil {
+		return nil, errors.New("agent execution requires session, message, agent services and the job repository")
+	}
+	return &agentExecutor{sessions: sessions, messages: messages, agents: agents, repo: repo}, nil
+}
+
+// WithAgentExecution enables the agent mode on a runner.
+//
+// Kept separate from the constructor so that a deployment which only wants
+// scripted jobs — or one where these services are unavailable — still gets a
+// working runner rather than a nil dependency waiting to panic.
+func (r *AgentCronRunner) WithAgentExecution(
+	sessions interfaces.SessionService,
+	messages interfaces.MessageService,
+	agents interfaces.CustomAgentService,
+	repo interfaces.AgentCronJobRepository,
+) *AgentCronRunner {
+	exec, err := newAgentExecutor(sessions, messages, agents, repo)
+	if err != nil {
+		logger.Warnf(context.Background(), "[AgentCron] agent execution unavailable: %v", err)
+		return r
+	}
+	r.executors[types.CronModeAgent] = exec
+	return r
+}
+
+// withoutSelfScheduling returns a copy of the agent with the cronjob tool
+// removed.
+//
+// A scheduled run must not be able to schedule more runs. Without this, one
+// job whose prompt drifts into "and set this up to repeat" spawns two, then
+// four — an exponential fan-out that nothing downstream would stop, because
+// each individual job looks perfectly legitimate. hermes-agent disables its
+// cron toolset inside cron runs for the same reason.
+//
+// The copy matters: the agent came from a service that may cache or share it,
+// so stripping the tool in place would quietly disable scheduling for the
+// interactive users of that same agent.
+func withoutSelfScheduling(agent *types.CustomAgent) *types.CustomAgent {
+	allowed := agent.Config.AllowedTools
+	idx := -1
+	for i, name := range allowed {
+		if name == tools.ToolCronjob {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return agent
+	}
+
+	trimmed := make([]string, 0, len(allowed)-1)
+	trimmed = append(trimmed, allowed[:idx]...)
+	trimmed = append(trimmed, allowed[idx+1:]...)
+
+	clone := *agent
+	clone.Config = agent.Config
+	clone.Config.AllowedTools = trimmed
+	return &clone
+}
