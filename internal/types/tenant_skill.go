@@ -1,6 +1,7 @@
 package types
 
 import (
+	"encoding/json"
 	"time"
 
 	"gorm.io/gorm"
@@ -60,6 +61,16 @@ type TenantSkillEntity struct {
 	// Instructions is the SKILL.md body (level 2 disclosure).
 	Instructions string `gorm:"type:text"`
 
+	// RequiresTools carries the SKILL.md frontmatter's requires_tools through
+	// the install, so the "this skill needs tools this agent was not given"
+	// check works for installed skills too, not only preloaded ones.
+	//
+	// Kept next to Instructions because it has the same origin: the install
+	// already parses the manifest and holds this value, it simply had nowhere
+	// to land. Empty means the author declared nothing — not that the skill
+	// needs no tools.
+	RequiresTools JSON `gorm:"type:jsonb;not null;default:'[]'"`
+
 	// BundleRef locates the uploaded archive in the tenant's file service.
 	BundleRef    string `gorm:"type:varchar(1024)"`
 	BundleSHA256 string `gorm:"type:varchar(64)"`
@@ -91,6 +102,22 @@ type TenantSkillEntity struct {
 
 // TableName pins the table so GORM's pluralizer cannot drift.
 func (e *TenantSkillEntity) TableName() string { return "tenant_skills" }
+
+// RequiresToolsList decodes the declared tool names.
+//
+// A malformed value reads as "declared nothing" rather than erroring: this
+// feeds a warning, and a warning that can break a chat turn is worse than a
+// warning that occasionally goes quiet.
+func (e *TenantSkillEntity) RequiresToolsList() []string {
+	if e == nil || len(e.RequiresTools) == 0 {
+		return nil
+	}
+	var tools []string
+	if err := json.Unmarshal(e.RequiresTools, &tools); err != nil {
+		return nil
+	}
+	return tools
+}
 
 // TenantSkillSnapshotEntity is the image-chain ledger. It exists because
 // snapshots are billable provider resources whose IDs we hand out: we must be

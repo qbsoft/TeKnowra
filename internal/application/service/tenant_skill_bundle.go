@@ -36,6 +36,10 @@ type SkillBundle struct {
 	Version      string
 	Description  string
 	Instructions string
+	// RequiresTools is the manifest's requires_tools, carried through so the
+	// installed row can answer "which tools does this skill need" without
+	// re-downloading and re-parsing the archive on every turn.
+	RequiresTools []string
 	// SHA256 is over the uploaded bytes, so re-uploading the same archive is
 	// recognisable in the UI and in the ledger, and a ready skill with this
 	// digest can skip a billed snapshot rebuild.
@@ -273,12 +277,13 @@ func skillBundleFromFiles(archive []byte, files map[string][]byte) (*SkillBundle
 
 	sum := sha256.Sum256(archive)
 	return &SkillBundle{
-		Name:         skill.Name,
-		Version:      version,
-		Description:  skill.Description,
-		Instructions: skill.Instructions,
-		SHA256:       hex.EncodeToString(sum[:]),
-		Files:        files,
+		Name:          skill.Name,
+		Version:       version,
+		Description:   skill.Description,
+		Instructions:  skill.Instructions,
+		RequiresTools: skill.RequiresTools,
+		SHA256:        hex.EncodeToString(sum[:]),
+		Files:         files,
 	}, nil
 }
 

@@ -91,7 +91,8 @@ func (s *TenantSkillService) InstallSkill(
 			ID: skillID, TenantID: tenantID, SandboxConfigID: configID,
 			Name: bundle.Name, Version: bundle.Version,
 			Description: bundle.Description, Instructions: bundle.Instructions,
-			BundleSHA256: bundle.SHA256, Enabled: true,
+			RequiresTools: encodeRequiresTools(bundle.RequiresTools),
+			BundleSHA256:  bundle.SHA256, Enabled: true,
 			Status: types.SkillStatusInstalling, InstallingSince: &now,
 		}); err != nil {
 			if !isSkillNameConflict(err) {
@@ -160,10 +161,28 @@ func (s *TenantSkillService) InstallSkill(
 // to replay the previous attempt's report before its own agent had started.
 // They are rewritten by beginInstallTranscript once this run has a message of
 // its own; until then the honest answer is that there is nothing to show yet.
+// encodeRequiresTools renders the declared tool names for the jsonb column.
+//
+// A nil declaration and an encoding failure both become "[]" rather than an
+// error: this value feeds a warning, and a skill must stay installable even if
+// its declaration is unusable. The failure is visible where it matters — the
+// warning simply does not fire.
+func encodeRequiresTools(tools []string) types.JSON {
+	if len(tools) == 0 {
+		return types.JSON("[]")
+	}
+	encoded, err := json.Marshal(tools)
+	if err != nil {
+		return types.JSON("[]")
+	}
+	return types.JSON(encoded)
+}
+
 func takeSkillRowForInstall(row *types.TenantSkillEntity, bundle *SkillBundle, now time.Time) {
 	row.Version = bundle.Version
 	row.Description = bundle.Description
 	row.Instructions = bundle.Instructions
+	row.RequiresTools = encodeRequiresTools(bundle.RequiresTools)
 	row.BundleSHA256 = bundle.SHA256
 	row.Status = types.SkillStatusInstalling
 	row.Error = ""

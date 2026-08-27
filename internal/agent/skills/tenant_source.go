@@ -115,6 +115,11 @@ func (s *TenantSkillSource) DiscoverSkills() ([]*SkillMetadata, error) {
 			Name:        row.Name,
 			Description: row.Description,
 			BasePath:    basePath,
+			// Read off the row, not the bundle: DiscoverSkills runs on every
+			// turn, and downloading plus unzipping an archive to answer
+			// "which tools does this need" would put object storage in the
+			// path of every chat message.
+			RequiresTools: row.RequiresToolsList(),
 		})
 	}
 	return metadata, nil
