@@ -72,16 +72,19 @@ func TestAllowlist_PicksToolsAcrossServices(t *testing.T) {
 	}
 }
 
-// An agent that never mentions an MCP tool is running on a list written before
-// per-tool selection existed. Filtering it would silently disarm it.
-func TestAllowlist_LeavesBuiltinOnlyConfigsAlone(t *testing.T) {
+// A non-empty list that happens to name no MCP tool is a list that grants no
+// MCP tool. There used to be an exception here — such a list was read as
+// "written before per-tool selection existed" and left everything registered —
+// and it made the stored config dishonest: the editor showed the tools
+// unticked while the agent went on calling them.
+func TestAllowlist_ABuiltinOnlyListGrantsNoMCPTools(t *testing.T) {
 	r := registryWith("thinking", "mcp_mail_send_email", "mcp_CRM-MCP_get_customer_profile")
 	cfg := &types.AgentConfig{AllowedTools: []string{"thinking", "knowledge_search"}}
 
 	applyMCPToolAllowlist(context.Background(), r, cfg)
 
-	if len(r.ListTools()) != 3 {
-		t.Errorf("tools = %v, want all three untouched", r.ListTools())
+	if got := r.ListTools(); len(got) != 1 || got[0] != "thinking" {
+		t.Errorf("tools = %v, want only the built-in it named", got)
 	}
 }
 

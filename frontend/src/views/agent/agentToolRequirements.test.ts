@@ -42,11 +42,13 @@ test('按工具授权时，只有勾中的那条的原名才算能调', () => {
   assert.ok(!callable.has('selftest'), '没勾的工具不能算数')
 })
 
-test('名单里一个 mcp_ 都没有时，候选服务的工具全部算能调', () => {
-  // 对齐后端 applyMCPToolAllowlist：这种名单是按工具授权之前存的，后端不筛。
+test('名单没写的工具就是不能用，没有「未配置」这种例外', () => {
+  // 曾经有过一条兼容规则：名单里一个 mcp_ 都没有时视为「按工具授权之前存的」，
+  // 于是候选服务的工具全部放行。它只为保住已部署的 agent 而存在，代价是
+  // 配置不诚实——编辑器显示六个没勾，agent 却六个都在调。已去掉。
   const callable = callableToolNames(['thinking'], { mail: MAIL })
-  assert.ok(callable.has('send_email'))
-  assert.ok(callable.has('selftest'))
+  assert.ok(!callable.has('send_email'), '没点名就不能用')
+  assert.ok(!callable.has('selftest'))
 })
 
 test('不做后缀匹配', () => {

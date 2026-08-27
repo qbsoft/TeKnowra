@@ -2401,13 +2401,9 @@ const unmetSkillCount = computed(() => Object.keys(unmetSkillTools.value).length
 //   2) 无论是否勾选，web_search / web_fetch 随 web_search_enabled 出现
 //   3) 当 kb_selection_mode === 'none' 时，RAG/Wiki 工具都视为不可用
 const effectiveTools = computed(() => {
-  // 不能只看勾选状态。后端的 applyMCPToolAllowlist 有一条兼容规则：
-  // allowed_tools 里一个 mcp_ 开头的都没有时，说明这份名单是按工具授权之前
-  // 存的，后端整个不筛，候选服务的工具**全部有效**。
-  //
-  // 只按勾选算的话，这类 agent 的预览会漏掉它实际能调的每一个 MCP 工具——
-  // 界面说「只有 2 个」，实际有 8 个。预览要是不能信，它就没有存在的意义。
-  // 用 callableToolNames，那里的口径跟后端逐字对齐、且有测试盯着。
+  // 用 callableToolNames 而不是直接读 allowed_tools：这份名单里存的是注册名
+  // （mcp_mail_send_email），而技能声明依赖时写的是工具原名（send_email），
+  // 两边要能对上。它的口径跟后端 applyMCPToolAllowlist 逐字对齐、有测试盯着。
   const chosen = callableToolNames.value;
   const items: Array<{ value: string; label: string; reason?: string; active: boolean }> = [];
   for (const tool of availableTools.value) {

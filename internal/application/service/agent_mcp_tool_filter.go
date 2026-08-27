@@ -47,12 +47,23 @@ const mcpToolPrefix = "mcp_"
 // The tools are never reachable by the model either way: registration and this
 // sweep both happen while the engine is being built, before the first LLM call.
 //
-// # Why an empty list means "allow everything"
+// # The list is the whole answer
 //
-// An agent whose AllowedTools is empty is running on DefaultAllowedTools(),
-// which lists only built-ins. Treating that as "no MCP tools" would silently
-// disarm every agent that has not been re-saved since this shipped. Empty means
-// unconfigured, not empty-set.
+// A name that is not in AllowedTools is not available, full stop. There is no
+// "unconfigured" mode where an unlisted tool is reachable anyway.
+//
+// An earlier version had one: a list naming no MCP tool at all was read as
+// "written before per-tool selection existed" and skipped the sweep, so every
+// tool of every selected service stayed reachable. It existed only to keep
+// already-deployed agents working, and it cost more than it saved — the editor
+// showed six unticked checkboxes while the agent happily called all six, and
+// the effective-tools preview had to grow a matching special case to stop
+// lying. Config that does not mean what it says is worse than config that
+// disarms an agent loudly.
+//
+// An empty AllowedTools still returns early, but for a different reason: an
+// empty list is DefaultAllowedTools() territory, and the built-in defaults are
+// resolved before this runs.
 func applyMCPToolAllowlist(
 	ctx context.Context,
 	registry *tools.ToolRegistry,
@@ -62,19 +73,9 @@ func applyMCPToolAllowlist(
 		return
 	}
 
-	// Only act once the agent actually names an MCP tool. Without this, an
-	// agent configured before per-tool selection existed — its list holds
-	// built-ins only — would lose every MCP tool the moment this shipped.
 	allowed := make(map[string]struct{}, len(config.AllowedTools))
-	namesMCP := false
 	for _, name := range config.AllowedTools {
 		allowed[name] = struct{}{}
-		if strings.HasPrefix(name, mcpToolPrefix) {
-			namesMCP = true
-		}
-	}
-	if !namesMCP {
-		return
 	}
 
 	var dropped []string

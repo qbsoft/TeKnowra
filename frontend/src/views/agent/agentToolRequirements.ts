@@ -64,16 +64,13 @@ export function callableToolNames(
   const allowed = allowedTools || []
   const names = new Set<string>(allowed)
 
-  // 跟后端 applyMCPToolAllowlist 的口径对齐：allowed_tools 里一个 mcp_ 开头的
-  // 都没有，说明这份名单是按工具授权之前存的，后端不会做筛，此时候选服务的
-  // 工具全部有效。空名单同理（未配置，不是空集）。
-  const namesMCP = allowed.some(n => n.startsWith('mcp_'))
-
+  // 名单没写的就是不能用，没有例外。这里只做一件事：把已授权的注册名
+  // （mcp_mail_send_email）同时登记成工具原名（send_email），因为技能声明
+  // 依赖时写的是原名——注册名的前缀取决于本空间把服务叫什么。
   for (const tools of Object.values(toolsByService)) {
     for (const tool of tools) {
-      if (namesMCP && !names.has(tool.registry_name)) continue
+      if (!names.has(tool.registry_name)) continue
       names.add(tool.tool_name)
-      names.add(tool.registry_name)
     }
   }
   return names
