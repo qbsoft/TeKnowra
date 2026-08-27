@@ -31,6 +31,14 @@ func NewSkillHandler(usableSkills usableSkillLister) *SkillHandler {
 type SkillInfoResponse struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	// RequiresTools is what the skill's SKILL.md declared it calls. The agent
+	// editor uses it to say "this skill needs send_email and this agent was
+	// not given it" while the agent is being configured, rather than letting
+	// the model discover it mid-answer and improvise around the gap.
+	//
+	// Omitted for the skills that declare nothing: an absent field means the
+	// author made no claim, which is not the same as "needs no tools".
+	RequiresTools []string `json:"requires_tools,omitempty"`
 }
 
 // ListSkills godoc
@@ -64,8 +72,9 @@ func (h *SkillHandler) ListSkills(c *gin.Context) {
 			continue
 		}
 		response = append(response, SkillInfoResponse{
-			Name:        row.Name,
-			Description: row.Description,
+			Name:          row.Name,
+			Description:   row.Description,
+			RequiresTools: row.RequiresToolsList(),
 		})
 	}
 
