@@ -2401,7 +2401,14 @@ const unmetSkillCount = computed(() => Object.keys(unmetSkillTools.value).length
 //   2) 无论是否勾选，web_search / web_fetch 随 web_search_enabled 出现
 //   3) 当 kb_selection_mode === 'none' 时，RAG/Wiki 工具都视为不可用
 const effectiveTools = computed(() => {
-  const chosen = new Set(formData.value.config.allowed_tools || []);
+  // 不能只看勾选状态。后端的 applyMCPToolAllowlist 有一条兼容规则：
+  // allowed_tools 里一个 mcp_ 开头的都没有时，说明这份名单是按工具授权之前
+  // 存的，后端整个不筛，候选服务的工具**全部有效**。
+  //
+  // 只按勾选算的话，这类 agent 的预览会漏掉它实际能调的每一个 MCP 工具——
+  // 界面说「只有 2 个」，实际有 8 个。预览要是不能信，它就没有存在的意义。
+  // 用 callableToolNames，那里的口径跟后端逐字对齐、且有测试盯着。
+  const chosen = callableToolNames.value;
   const items: Array<{ value: string; label: string; reason?: string; active: boolean }> = [];
   for (const tool of availableTools.value) {
     const picked = chosen.has(tool.value);
@@ -2412,6 +2419,23 @@ const effectiveTools = computed(() => {
       items.push({ value: tool.value, label: tool.label, active: true });
     }
   }
+  // MCP 工具不在 allTools 里（那是手写的内置工具清单），得单独算。
+  // 少了这段，预览就只显示内置工具——而这个 agent 实际能调的 6 个 CRM 工具
+  // 一个都不会出现，界面说「2 个」实际有「8 个」。
+  for (const id of mcpCandidateServiceIds.value) {
+    const state = mcpToolsByService.value[id];
+    if (state?.status !== 'ok') continue;
+    const svc = (editorResources.mcpServices || []).find((x: any) => x.id === id);
+    for (const tool of state.tools) {
+      if (!chosen.has(tool.registry_name)) continue;
+      items.push({
+        value: tool.registry_name,
+        label: svc?.name ? `${svc.name} · ${tool.tool_name}` : tool.tool_name,
+        active: true,
+      });
+    }
+  }
+
   if (formData.value.config.web_search_enabled) {
     items.push({ value: 'web_search', label: t('agentEditor.tools.webSearch'), active: true });
     items.push({ value: 'web_fetch', label: t('agentEditor.tools.webFetch'), active: true });
