@@ -38,6 +38,25 @@ git checkout --ours frontend/src/assets/img/weknora.png
 | `internal/middleware/auth.go` | JWT `aud` = `teknowra` | 36 次 |
 | `internal/handler/tenant.go` | 签发 JWT 的 `aud` 同上 | 中频 |
 | `internal/middleware/auth_api_principal_test.go` | 测试里的 `aud` 跟着改（4 处） | 低频 |
+| `internal/sandbox/docker_engine.go` | `ValidateDockerHost` 放行 `npipe://`（Windows 本机守护进程），并把它加进缺少 scheme 时的报错提示 | 见下 |
+
+### Windows 上 Docker 沙箱要放行 `npipe`
+
+不改的话 Docker 后端在 Windows 上**完全不能用**：沙箱配置的守护进程地址留空时，
+`DetectLocalDockerHost` 去读 docker CLI 的上下文，Windows 返回
+`npipe:////./pipe/docker_engine`，而 `ValidateDockerHost` 只认
+unix / tcp / http / https，于是配置在保存前就被拒：
+
+    sandbox: unsupported docker host scheme "npipe"
+
+界面上只显示「检测未通过」，看不出是平台不支持还是自己填错了。
+
+**只需放行，不需要写传输层**：本包用的是 moby 官方客户端，它自己就认 npipe；
+拨号守卫只管网络端点、TLS 校验只管 tcp/http/https，命名管道跟 unix 套接字
+一样是本机端点，两者本来就不该管它。
+
+**这条值得提给上游**——不是我们的定制需求，任何 Windows 开发者都会撞上。
+上游接了就可以从本清单里删掉。
 
 ### WeKnora Cloud 为什么要三处一起堵
 
