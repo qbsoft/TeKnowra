@@ -15,6 +15,7 @@
 7. **分块管理**：查询、更新和删除知识分块
 8. **消息管理**：获取和删除会话消息
 9. **模型管理**：创建、获取、更新和删除模型
+10. **沙箱技能**：向沙箱配置安装技能（zip 上传，或从 ClawHub / SkillHub / GitHub 等来源）
 
 ## 使用方法
 
@@ -221,6 +222,7 @@ err = agentSession.Ask(context.Background(), "什么是深度学习?",
 | `AgentResponseTypeToolResult` | 工具执行结果 | 工具执行完成后 |
 | `AgentResponseTypeReferences` | 知识引用 | 检索到相关知识时 |
 | `AgentResponseTypeAnswer` | 最终答案 | Agent生成回答时（流式） |
+| `AgentResponseTypeArtifactsPending` | 生成文件上传中 | 回答结束后、文件写入对象存储完成前 |
 | `AgentResponseTypeReflection` | 自我反思 | Agent评估自己的回答时 |
 | `AgentResponseTypeError` | 错误 | 发生错误时 |
 
@@ -384,6 +386,45 @@ olderMessages, err := apiClient.GetMessagesBefore(context.Background(), sessionI
 if err != nil {
     // 处理错误
 }
+```
+
+### 示例：从托管平台安装沙箱技能
+
+`source` 必须写明确：ClawHub 用 `@owner/slug`，GitHub / SkillHub 粘贴完整 URL。不要传裸的 `owner/slug`。
+
+```go
+skillID, err := apiClient.InstallSandboxSkillFromSource(
+    context.Background(), sandboxConfigID, "@owner/slug")
+if err != nil {
+    // 处理错误
+}
+_ = skillID // 用 skillID 订阅 /sandbox-configs/{id}/skills/{skillID}/install-events
+```
+
+### 示例：重试失败的安装
+
+安装失败的原因常与安装包无关（沙箱不可达、依赖源超时）。服务端保留着原始安装包，重试无需再传一次。
+
+```go
+skillID, err := apiClient.ReinstallSandboxSkill(context.Background(), sandboxConfigID, skillID)
+if err != nil {
+    // 处理错误
+}
+```
+
+### 示例：查看已安装技能的文件
+
+```go
+files, err := apiClient.ListSandboxSkillFiles(context.Background(), sandboxConfigID, skillID)
+if err != nil {
+    // 处理错误
+}
+content, err := apiClient.GetSandboxSkillFile(context.Background(), sandboxConfigID, skillID, "SKILL.md")
+if err != nil {
+    // 处理错误
+}
+_ = files
+_ = content
 ```
 
 ## 完整示例
