@@ -55,8 +55,8 @@ unix / tcp / http / https，于是配置在保存前就被拒：
 拨号守卫只管网络端点、TLS 校验只管 tcp/http/https，命名管道跟 unix 套接字
 一样是本机端点，两者本来就不该管它。
 
-**这条值得提给上游**——不是我们的定制需求，任何 Windows 开发者都会撞上。
-上游接了就可以从本清单里删掉。
+**已提给上游**：[Tencent/WeKnora#2846](https://github.com/Tencent/WeKnora/pull/2846)
+（分支 `upstream-npipe`，基于上游主线单独摘出）。合并后可以从本清单里删掉这一节。
 
 ### WeKnora Cloud 为什么要三处一起堵
 
