@@ -141,6 +141,15 @@ type MCPCatalog struct {
 	load           mcpCatalogLoader
 	lookup         MCPServiceLookup
 	gate           approval.MCPApproval
+
+	// agentAllow narrows this engine's tools to what the agent's own
+	// allowed_tools names, on top of the tenant-wide enabled policy the gate
+	// enforces. nil means the agent does not restrict MCP tools. Set through
+	// ToolRegistry.SetAgentMCPToolAllowlist (mcp_agent_allowlist.go); kept as
+	// a field here because both visibleTools and checkEnabled must consult it,
+	// and those two are the only choke points every discovery and call path
+	// shares.
+	agentAllow func(serviceID, toolName string) bool
 }
 
 type mcpCatalogServer struct {
@@ -326,9 +335,16 @@ func (c *MCPCatalog) visibleTools(ctx context.Context, id string, tools []*MCPTo
 	}
 	visible := make([]*MCPTool, 0, len(tools))
 	for _, tool := range tools {
-		if policies[tool.mcpTool.Name] {
-			visible = append(visible, tool)
+		if !policies[tool.mcpTool.Name] {
+			continue
 		}
+		// The agent's own allowlist filters after the tenant policy: a tool
+		// the workspace enabled is still invisible to an agent that was not
+		// granted it.
+		if c.agentAllow != nil && !c.agentAllow(id, tool.mcpTool.Name) {
+			continue
+		}
+		visible = append(visible, tool)
 	}
 	return visible, nil
 }
@@ -346,6 +362,11 @@ func (c *MCPCatalog) checkEnabled(ctx context.Context, tool *MCPTool) error {
 	}
 	if !enabled {
 		return fmt.Errorf("MCP tool is no longer available or enabled; rediscover its definition")
+	}
+	// Execution re-checks the agent allowlist too: visibility filtering alone
+	// would leave a constructed or remembered tool_ref callable.
+	if c.agentAllow != nil && !c.agentAllow(tool.service.ID, tool.mcpTool.Name) {
+		return fmt.Errorf("MCP tool is not in this agent's allowed tools")
 	}
 	return nil
 }

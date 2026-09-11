@@ -96,19 +96,17 @@ export async function listMCPServices(): Promise<MCPService[]> {
 }
 
 // Get a single MCP service by ID
-/** 一个 MCP 工具，以及它在 agent 的 allowed_tools 里应当填写的名字。 */
+/** 一个 MCP 工具，以及它在 agent 的 allowed_tools 里应当填写的授权键。 */
 export interface MCPAgentTool {
   /** MCP 服务自己报出的名字，如 send_email */
   tool_name: string
-  /** 注册后的名字，配 allowed_tools 要用这个，如 mcp_mail_send_email */
-  registry_name: string
-  description?: string
   /**
-   * 服务名里没有可用的 ASCII 字符，被规范化成了空串，于是该服务的工具
-   * 全叫 mcp__<工具名>。这种名字在多个同类服务之间会撞，撞了之后先注册
-   * 的赢、后面的被静默丢弃，所以要在界面上提示用户改服务名。
+   * 写进 allowed_tools 的授权键：mcp:<服务ID>:<工具名>。
+   * 服务 ID 是 UUID，改服务名、改工具描述都不影响它，授权不会被静默作废。
+   * （旧版用注册名 mcp_mail_send_email，服务名一消毒就没了，已弃用。）
    */
-  name_degraded?: boolean
+  authorization_key: string
+  description?: string
 }
 
 /**

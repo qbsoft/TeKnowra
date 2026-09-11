@@ -5926,7 +5926,6 @@ export default {
       groupWikiIssue: 'Wiki Review',
       groupData: 'Data Analysis',
       writeWarning: 'Mutates Wiki content',
-      mcpNameDegraded: 'This service name has no usable ASCII characters, so its tools are named mcp__xxx and collide with other such services; the loser is dropped silently. Rename it using ASCII.',
       mcpLoading: "Loading this service's tools...",
       mcpLoadFailed: "Could not list this service's tools: {message}. Check its URL and credentials under MCP Services.",
       dangerTag: 'Write',

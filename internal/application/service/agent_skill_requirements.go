@@ -52,15 +52,28 @@ type skillRequirementGap struct {
 // Asking each MCP tool for its own source name avoids the guess.
 func unmetSkillRequirements(
 	registry *tools.ToolRegistry,
+	allowedTools []string,
 	metadata []*skills.SkillMetadata,
 ) []skillRequirementGap {
 	if registry == nil || len(metadata) == 0 {
 		return nil
 	}
+	// An empty allowed_tools means unconfigured: the agent reaches every tool
+	// of its selected services through the discovery catalog, which this
+	// build-time check cannot enumerate without connecting to each server.
+	// Unverifiable is not the same as missing — stay silent rather than warn
+	// about every MCP requirement on every legacy agent.
+	if len(allowedTools) == 0 {
+		return nil
+	}
 
-	// Every name this agent can call, in both spellings a requirement might
-	// use: the registry name (built-ins are required under it) and, for MCP
-	// tools, the name their server reports.
+	// Every name this agent can call, in the spellings a requirement might
+	// use. Built-ins sit in the registry under their own names. MCP tools no
+	// longer sit in the registry at build time; their grants live in
+	// allowed_tools as "mcp:<service_id>:<tool_name>", and a requirement names
+	// the tool the way its server does, so the grant's tool segment is the
+	// spelling to admit. The registry walk still catches the direct-exposure
+	// compatibility path, where MCPTool entries do get registered.
 	callable := make(map[string]struct{})
 	for _, name := range registry.ListTools() {
 		callable[name] = struct{}{}
@@ -72,6 +85,12 @@ func unmetSkillRequirements(
 			if source := mcpTool.SourceToolName(); source != "" {
 				callable[source] = struct{}{}
 			}
+		}
+	}
+	for _, name := range allowedTools {
+		callable[name] = struct{}{}
+		if _, toolName, ok := tools.ParseAgentMCPToolKey(name); ok {
+			callable[toolName] = struct{}{}
 		}
 	}
 
@@ -112,9 +131,10 @@ func formatUnmetRequirement(gap skillRequirementGap) string {
 func logUnmetSkillRequirements(
 	ctx context.Context,
 	registry *tools.ToolRegistry,
+	allowedTools []string,
 	metadata []*skills.SkillMetadata,
 ) {
-	for _, gap := range unmetSkillRequirements(registry, metadata) {
+	for _, gap := range unmetSkillRequirements(registry, allowedTools, metadata) {
 		logger.Warnf(ctx, "%s", formatUnmetRequirement(gap))
 	}
 }

@@ -1945,8 +1945,8 @@ const editorResources = useEditorResourcesStore();
 // 和内置工具用同一份名单。这里把选中服务的工具拉回来，作为动态分组并进
 // 下面那个工具网格，复用同一个 checkbox group。
 //
-// 名字用后端返回的 registry_name（mcp_mail_send_email），不是服务自报的
-// send_email —— 两者之间的转换只在后端有实现，前端不复刻。
+// 勾选值用后端返回的 authorization_key（mcp:<服务ID>:<工具名>），不是服务
+// 自报的 send_email —— 键的生成规则只在后端有实现，前端不复刻。
 // 一个服务一个状态。拉不到工具和拉到了零个工具是两回事，得分开记——
 // 前者要告诉用户“连不上”，后者才是真的没工具。
 type McpToolLoad =
@@ -2656,23 +2656,18 @@ const groupedAvailableTools = computed(() => {
       const state = mcpToolsByService.value[id];
       const tools = state?.status === 'ok' ? state.tools : [];
       const svc = services.find((x: any) => x.id === id);
-      const degraded = tools.some(t => t.name_degraded);
       let warning = '';
       if (state?.status === 'error') {
         warning = t('agentEditor.tools.mcpLoadFailed', { message: state.message });
       } else if (state?.status === 'loading') {
         warning = t('agentEditor.tools.mcpLoading');
-      } else if (degraded) {
-        // 服务名被规范化成空串时，它的工具名会跟别的同类服务撞，撞了就
-        // 静默少工具。在这里说出来，比让人事后查日志强。
-        warning = t('agentEditor.tools.mcpNameDegraded');
       }
       return {
         key: `mcp_${id}`,
         label: svc?.name || id,
         warning,
         tools: tools.map(x => ({
-          value: x.registry_name,
+          value: x.authorization_key,
           label: x.tool_name,
           description: x.description,
           disabled: false,
@@ -2765,9 +2760,9 @@ const effectiveTools = computed(() => {
     if (state?.status !== 'ok') continue;
     const svc = (editorResources.mcpServices || []).find((x: any) => x.id === id);
     for (const tool of state.tools) {
-      if (!chosen.has(tool.registry_name)) continue;
+      if (!chosen.has(tool.authorization_key)) continue;
       items.push({
-        value: tool.registry_name,
+        value: tool.authorization_key,
         label: svc?.name ? `${svc.name} · ${tool.tool_name}` : tool.tool_name,
         active: true,
       });

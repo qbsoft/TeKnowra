@@ -14,7 +14,8 @@ export type MCPSelectionMode = 'all' | 'selected' | 'none'
 /** listMCPAgentTools 的返回项里这个检查用得到的部分。 */
 export interface ToolNamePair {
   tool_name: string
-  registry_name: string
+  /** 写进 allowed_tools 的授权键：mcp:<服务ID>:<工具名>。 */
+  authorization_key: string
 }
 
 export interface ServiceRef {
@@ -48,14 +49,14 @@ export function mcpCandidateServiceIds(
 }
 
 /**
- * 这个 agent 实际能调的工具名，两种写法都收：注册名，以及 MCP 工具的原名。
+ * 这个 agent 实际能调的工具名，两种写法都收：授权键，以及 MCP 工具的原名。
  *
- * 收两种是因为要求方和授权方用的不是同一套名字：allowed_tools 里存的是注册名
- * （mcp_mail_send_email），而技能声明依赖时只能写工具原名（send_email）——
- * 注册名的前缀取决于本空间把服务叫什么，写不进可移植的技能文件。
+ * 收两种是因为要求方和授权方用的不是同一套名字：allowed_tools 里存的是授权键
+ * （mcp:<服务ID>:send_email），而技能声明依赖时只能写工具原名（send_email）——
+ * 服务 ID 是本空间的事，写不进可移植的技能文件。
  *
- * 不要改成后缀匹配。'email' 是 'mcp_mail_send_email' 的后缀，真缺的工具会被
- * 判成有，提示就正好在该响的时候不响。
+ * 不要改成后缀匹配。'email' 是 'send_email' 的后缀，真缺的工具会被判成有，
+ * 提示就正好在该响的时候不响。
  */
 export function callableToolNames(
   allowedTools: string[] | undefined,
@@ -64,12 +65,12 @@ export function callableToolNames(
   const allowed = allowedTools || []
   const names = new Set<string>(allowed)
 
-  // 名单没写的就是不能用，没有例外。这里只做一件事：把已授权的注册名
-  // （mcp_mail_send_email）同时登记成工具原名（send_email），因为技能声明
-  // 依赖时写的是原名——注册名的前缀取决于本空间把服务叫什么。
+  // 名单没写的就是不能用，没有例外。这里只做一件事：把已授权的键
+  // （mcp:<服务ID>:send_email）同时登记成工具原名（send_email），因为技能
+  // 声明依赖时写的是原名。
   for (const tools of Object.values(toolsByService)) {
     for (const tool of tools) {
-      if (!names.has(tool.registry_name)) continue
+      if (!names.has(tool.authorization_key)) continue
       names.add(tool.tool_name)
     }
   }

@@ -9,91 +9,87 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
-// mcpToolPrefix is what MCPTool.Name() puts in front of every MCP tool name.
-//
-// Declared here rather than exported from the tools package so this change
-// touches no upstream file. The cost of that choice is drift: if upstream ever
-// renames the prefix, this filter would quietly stop matching and every agent
-// would silently regain the tools it was configured to lose. Silent is the
-// dangerous part, so TestMCPToolPrefixMatchesReality pins the value against a
-// real MCPTool name and fails loudly if it moves.
-const mcpToolPrefix = "mcp_"
-
 // applyMCPToolAllowlist narrows an agent's MCP tools down to the ones its
-// AllowedTools list names.
+// AllowedTools list grants.
 //
 // # Why this exists
 //
 // The platform grants built-in tools and MCP tools at different granularities:
 // built-ins are picked one by one out of AllowedTools, while MCP tools arrive
-// as whole services — select a service and every tool it exposes lands in the
-// registry. So "let this agent send mail but not touch contract review" is not
-// expressible when both live behind one service, and "take one tool from
-// service A and one from service B" is not expressible at all.
+// as whole services. So "let this agent send mail but not touch contract
+// review" is not expressible when both live behind one service. This function
+// is the missing granularity: the service list stays the source of candidates,
+// and AllowedTools is the single answer to "what may this agent actually use".
 //
-// Claude Code separates the two concerns: `mcpServers` decides what to connect
-// to, `tools` decides what may be called. This function is that separation —
-// the service list stays the source of candidates, and AllowedTools becomes the
-// single answer to "what may this agent actually use".
+// # How it enforces, after the catalog rework
 //
-// # Why it filters after registration rather than during
-//
-// RegisterMCPTools is upstream code with a single call site. Threading an
-// allowlist through its signature would put our change in the middle of a
-// function upstream keeps editing. Removing entries afterwards keeps the whole
-// decision here, in a file upstream does not have, and costs one line at the
-// call site.
-//
-// The tools are never reachable by the model either way: registration and this
-// sweep both happen while the engine is being built, before the first LLM call.
+// Upstream moved MCP from eager per-tool registration to a discovery catalog:
+// the registry holds a directory tool and one call entry point, and concrete
+// tools materialise on demand. There is nothing left to sweep out of the
+// registry, so the old post-registration Unregister pass would silently allow
+// everything. Instead this hands the catalog a predicate that visibleTools
+// (discovery) and checkEnabled (every execution path, constructed tool_refs
+// included) both consult — the same two choke points the tenant-wide
+// enabled policy runs through.
 //
 // # The list is the whole answer
 //
-// A name that is not in AllowedTools is not available, full stop. There is no
-// "unconfigured" mode where an unlisted tool is reachable anyway.
+// A grant that is not in AllowedTools does not exist. Grants use the stable
+// "mcp:<service_id>:<tool_name>" form (see tools.AgentMCPToolKey for why the
+// registry name stopped being usable). A non-empty list containing no MCP
+// grant therefore blocks every MCP tool — there is no "unconfigured" reading
+// of a list that names only built-ins; we removed that compat rule after it
+// made stored config lie about what agents could call.
 //
-// An earlier version had one: a list naming no MCP tool at all was read as
-// "written before per-tool selection existed" and skipped the sweep, so every
-// tool of every selected service stayed reachable. It existed only to keep
-// already-deployed agents working, and it cost more than it saved — the editor
-// showed six unticked checkboxes while the agent happily called all six, and
-// the effective-tools preview had to grow a matching special case to stop
-// lying. Config that does not mean what it says is worse than config that
-// disarms an agent loudly.
-//
-// An empty AllowedTools still returns early, but for a different reason: an
-// empty list is DefaultAllowedTools() territory, and the built-in defaults are
-// resolved before this runs.
+// An empty AllowedTools still means unconfigured: such agents run on
+// DefaultAllowedTools() and are not restricted here.
 func applyMCPToolAllowlist(
 	ctx context.Context,
 	registry *tools.ToolRegistry,
 	config *types.AgentConfig,
 ) {
-	if registry == nil || config == nil || len(config.AllowedTools) == 0 {
+	if registry == nil || config == nil {
 		return
 	}
-
-	allowed := make(map[string]struct{}, len(config.AllowedTools))
-	for _, name := range config.AllowedTools {
-		allowed[name] = struct{}{}
+	allow, legacy, restrict := agentMCPToolPredicate(config.AllowedTools)
+	if !restrict {
+		return
 	}
+	if len(legacy) > 0 {
+		// A registry-name grant ("mcp_mail_send_email") predates the catalog
+		// rework and cannot be resolved to a service ID anymore. It grants
+		// nothing; saying so here is what turns "the agent lost its tools"
+		// from a mystery into a config fix.
+		logger.Warnf(ctx, "Ignoring %d legacy MCP grant(s) in allowed_tools "+
+			"(re-save the agent's tool selection to convert them): %v",
+			len(legacy), legacy)
+	}
+	registry.SetAgentMCPToolAllowlist(allow)
+	logger.Infof(ctx, "Agent MCP allowlist active")
+}
 
-	var dropped []string
-	for _, name := range registry.ListTools() {
-		if !strings.HasPrefix(name, mcpToolPrefix) {
-			continue // built-ins were already filtered when they were registered
-		}
-		if _, ok := allowed[name]; ok {
+// agentMCPToolPredicate turns an allowed_tools list into the catalog
+// predicate. restrict is false only for an empty list (unconfigured, running
+// on defaults). legacy collects old registry-name grants, which admit nothing
+// but deserve a log line.
+func agentMCPToolPredicate(
+	allowedTools []string,
+) (allow func(serviceID, toolName string) bool, legacy []string, restrict bool) {
+	if len(allowedTools) == 0 {
+		return nil, nil, false
+	}
+	granted := make(map[string]struct{}, len(allowedTools))
+	for _, name := range allowedTools {
+		if _, _, ok := tools.ParseAgentMCPToolKey(name); ok {
+			granted[name] = struct{}{}
 			continue
 		}
-		registry.Unregister(name)
-		dropped = append(dropped, name)
+		if strings.HasPrefix(name, "mcp_") {
+			legacy = append(legacy, name)
+		}
 	}
-
-	if len(dropped) > 0 {
-		// Info, not Warn: dropping tools is the configured outcome, and this
-		// line is what explains "why can't the agent see that tool" later.
-		logger.Infof(ctx, "Dropped %d MCP tool(s) not in the agent's allowed list: %v",
-			len(dropped), dropped)
-	}
+	return func(serviceID, toolName string) bool {
+		_, ok := granted[tools.AgentMCPToolKey(serviceID, toolName)]
+		return ok
+	}, legacy, true
 }

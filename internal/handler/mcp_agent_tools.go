@@ -2,7 +2,6 @@ package handler
 
 import (
 	"net/http"
-	"strings"
 
 	"github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/errors"
@@ -12,19 +11,18 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// MCPAgentToolsHandler lists an MCP service's tools under the names an agent
-// must use to allow them.
+// MCPAgentToolsHandler lists an MCP service's tools under the keys an agent's
+// allowed_tools must contain to grant them.
 //
 // The existing /mcp-services/:id/tools endpoint returns what the MCP server
-// itself reports — "send_email". What goes into an agent's allowed_tools is the
-// name the registry gives it — "mcp_mail_send_email". Without somewhere to read
-// the second form, configuring per-tool access means guessing at a
-// transformation or reading it out of the backend log.
+// itself reports — "send_email". What goes into an agent's allowed_tools is
+// the grant key — "mcp:<service_id>:send_email". Deriving it here rather than
+// in the browser keeps one implementation of the rule (tools.AgentMCPToolKey).
 //
-// Deriving it here rather than in the browser keeps one implementation of the
-// rule. The transformation drops every non-ASCII character, so a service named
-// in Chinese yields "mcp__send_email" — surprising enough that seeing the real
-// name is worth an endpoint on its own.
+// Earlier versions exposed the registry name ("mcp_mail_send_email") instead.
+// That name is derived from the service's display name, which sanitises
+// lossily and now embeds a schema hash — both wrong for a stored grant; see
+// tools.AgentMCPToolKey for the full reasoning.
 type MCPAgentToolsHandler struct {
 	mcpServiceService interfaces.MCPServiceService
 }
@@ -34,37 +32,20 @@ func NewMCPAgentToolsHandler(svc interfaces.MCPServiceService) *MCPAgentToolsHan
 	return &MCPAgentToolsHandler{mcpServiceService: svc}
 }
 
-// agentToolView pairs what the MCP server calls a tool with what an agent
-// config has to call it.
+// agentToolView pairs what the MCP server calls a tool with the grant key an
+// agent config uses to allow it.
 type agentToolView struct {
 	// ToolName is the name the MCP server reports.
 	ToolName string `json:"tool_name"`
-	// RegistryName is what goes into an agent's allowed_tools.
-	RegistryName string `json:"registry_name"`
-	Description  string `json:"description,omitempty"`
-	// NameDegraded flags a service whose name survived sanitisation as
-	// nothing, so every one of its tools is called "mcp__<tool>". Such names
-	// collide across services, and the loser is dropped with only a log line
-	// to show for it.
-	NameDegraded bool `json:"name_degraded,omitempty"`
-}
-
-// nameIsDegraded reports whether a registry name lost its service segment.
-//
-// A healthy name is "mcp_<service>_<tool>". When the service name sanitises to
-// nothing — every character was non-ASCII — the segment collapses and the name
-// becomes "mcp__<tool>", which every such service produces identically. The
-// second one to register loses, with only a log line to say so.
-//
-// Spelled as a named function so a test can pin it against names built by the
-// real MCPTool rather than against this one line's arithmetic.
-func nameIsDegraded(registryName string) bool {
-	return strings.HasPrefix(registryName, "mcp__")
+	// AuthorizationKey is what goes into an agent's allowed_tools:
+	// "mcp:<service_id>:<tool_name>".
+	AuthorizationKey string `json:"authorization_key"`
+	Description      string `json:"description,omitempty"`
 }
 
 // ListAgentTools godoc
-// @Summary      列出 MCP 服务的工具及其在 agent 配置中的名字
-// @Description  返回每个工具在 allowed_tools 里应当填写的名称
+// @Summary      列出 MCP 服务的工具及其在 agent 配置中的授权键
+// @Description  返回每个工具在 allowed_tools 里应当填写的键（mcp:<服务ID>:<工具名>）
 // @Tags         MCP服务
 // @Produce      json
 // @Param        id path string true "MCP服务ID"
@@ -94,32 +75,15 @@ func (h *MCPAgentToolsHandler) ListAgentTools(c *gin.Context) {
 	}
 
 	views := make([]agentToolView, 0, len(mcpTools))
-	degraded := false
 	for _, t := range mcpTools {
 		if t == nil {
 			continue
 		}
-		// Ask a real MCPTool for its name rather than reimplementing the rule:
-		// the transformation lives in one place and this cannot drift from it.
-		probe := tools.NewMCPTool(svc, t, nil, nil, 0)
-		name := probe.Name()
-		if nameIsDegraded(name) {
-			degraded = true
-		}
 		views = append(views, agentToolView{
-			ToolName:     t.Name,
-			RegistryName: name,
-			Description:  t.Description,
+			ToolName:         t.Name,
+			AuthorizationKey: tools.AgentMCPToolKey(serviceID, t.Name),
+			Description:      t.Description,
 		})
-	}
-	if degraded {
-		for i := range views {
-			views[i].NameDegraded = true
-		}
-		logger.Warnf(ctx,
-			"[MCPAgentTools] service %q sanitises to an empty prefix; its tools are named mcp__<tool> "+
-				"and will collide with any other such service that exposes a tool of the same name",
-			svc.Name)
 	}
 
 	c.JSON(http.StatusOK, gin.H{

@@ -27,34 +27,41 @@ test('mode=selected 只取勾中的，mode=none 一个都不取', () => {
   assert.deepEqual(mcpCandidateServiceIds('none', ['b'], SERVICES), [])
 })
 
+// 授权键格式 mcp:<服务ID>:<工具名>，由后端 tools.AgentMCPToolKey 生成，
+// 前端只透传。旧的注册名（mcp_mail_send_email）已弃用。
+const MAIL_SVC = '6a1e8a53-0000-4000-8000-000000000001'
 const MAIL = [
-  { tool_name: 'send_email', registry_name: 'mcp_mail_send_email' },
-  { tool_name: 'selftest', registry_name: 'mcp_mail_selftest' },
+  { tool_name: 'send_email', authorization_key: `mcp:${MAIL_SVC}:send_email` },
+  { tool_name: 'selftest', authorization_key: `mcp:${MAIL_SVC}:selftest` },
 ]
 
 test('按工具授权时，只有勾中的那条的原名才算能调', () => {
   const callable = callableToolNames(
-    ['thinking', 'mcp_mail_send_email'],
+    ['thinking', `mcp:${MAIL_SVC}:send_email`],
     { mail: MAIL },
   )
   assert.ok(callable.has('send_email'), '勾了 send_email，技能写原名要能对上')
-  assert.ok(callable.has('mcp_mail_send_email'))
+  assert.ok(callable.has(`mcp:${MAIL_SVC}:send_email`))
   assert.ok(!callable.has('selftest'), '没勾的工具不能算数')
 })
 
 test('名单没写的工具就是不能用，没有「未配置」这种例外', () => {
-  // 曾经有过一条兼容规则：名单里一个 mcp_ 都没有时视为「按工具授权之前存的」，
-  // 于是候选服务的工具全部放行。它只为保住已部署的 agent 而存在，代价是
-  // 配置不诚实——编辑器显示六个没勾，agent 却六个都在调。已去掉。
+  // 曾经有过一条兼容规则：名单里一个 MCP 授权都没有时视为「按工具授权之前
+  // 存的」，于是候选服务的工具全部放行。它只为保住已部署的 agent 而存在，
+  // 代价是配置不诚实——编辑器显示六个没勾，agent 却六个都在调。已去掉。
   const callable = callableToolNames(['thinking'], { mail: MAIL })
   assert.ok(!callable.has('send_email'), '没点名就不能用')
   assert.ok(!callable.has('selftest'))
+
+  // 旧格式的注册名同样不算数——它解析不回服务 ID，授权不了任何东西。
+  const legacy = callableToolNames(['mcp_mail_send_email'], { mail: MAIL })
+  assert.ok(!legacy.has('send_email'), '旧注册名不能再当授权用')
 })
 
 test('不做后缀匹配', () => {
-  // 'email' 是 'mcp_mail_send_email' 的后缀。放过它的话，真缺的工具会被判成
-  // 有，这个提示就正好在该响的时候不响。
-  const callable = callableToolNames(['mcp_mail_send_email'], { mail: MAIL })
+  // 'email' 是 'send_email' 的后缀。放过它的话，真缺的工具会被判成有，
+  // 这个提示就正好在该响的时候不响。
+  const callable = callableToolNames([`mcp:${MAIL_SVC}:send_email`], { mail: MAIL })
   assert.ok(!callable.has('email'))
 })
 
@@ -64,7 +71,7 @@ const SKILLS = [
 ]
 
 test('报出启用技能里没被授予的工具', () => {
-  const callable = callableToolNames(['mcp_mail_send_email'], { mail: MAIL })
+  const callable = callableToolNames([`mcp:${MAIL_SVC}:send_email`], { mail: MAIL })
   const gaps = unmetSkillTools(SKILLS, new Set(['contract-review']), callable)
   assert.deepEqual(gaps, { 'contract-review': ['list_review_templates'] })
 })

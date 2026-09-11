@@ -1,132 +1,103 @@
 package service
 
 import (
-	"context"
-	"encoding/json"
-	"strings"
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/agent/tools"
-	"github.com/Tencent/WeKnora/internal/types"
 )
 
-// stubTool is the smallest thing the registry accepts.
-type stubTool struct{ name string }
+const (
+	mailSvc = "6a1e8a53-0000-4000-8000-000000000001"
+	crmSvc  = "6a1e8a53-0000-4000-8000-000000000002"
+)
 
-func (s *stubTool) Name() string                { return s.name }
-func (s *stubTool) Description() string         { return "" }
-func (s *stubTool) Parameters() json.RawMessage { return json.RawMessage(`{}`) }
-func (s *stubTool) Execute(context.Context, json.RawMessage) (*types.ToolResult, error) {
-	return &types.ToolResult{Success: true}, nil
-}
-
-func registryWith(names ...string) *tools.ToolRegistry {
-	r := tools.NewToolRegistry()
-	for _, n := range names {
-		r.RegisterTool(&stubTool{name: n})
-	}
-	return r
-}
-
-func registryHas(r *tools.ToolRegistry, name string) bool {
-	for _, n := range r.ListTools() {
-		if n == name {
-			return true
-		}
-	}
-	return false
-}
-
-// The point of the whole change: take one tool from one service and one from
+// The point of the whole feature: take one tool from one service and one from
 // another, leaving the rest of both behind.
-func TestAllowlist_PicksToolsAcrossServices(t *testing.T) {
-	r := registryWith(
+func TestPredicate_PicksToolsAcrossServices(t *testing.T) {
+	allow, legacy, restrict := agentMCPToolPredicate([]string{
 		"thinking",
-		"mcp_CRM-MCP_get_customer_profile",
-		"mcp_CRM-MCP_get_customer_credit_control",
-		"mcp_CRM-MCP_list_receivables",
-		"mcp_mail_send_email",
-		"mcp_mail_selftest",
-	)
-	cfg := &types.AgentConfig{AllowedTools: []string{
-		"thinking",
-		"mcp_CRM-MCP_get_customer_profile",
-		"mcp_mail_send_email",
-	}}
-
-	applyMCPToolAllowlist(context.Background(), r, cfg)
-
-	for _, keep := range []string{"thinking", "mcp_CRM-MCP_get_customer_profile", "mcp_mail_send_email"} {
-		if !registryHas(r, keep) {
-			t.Errorf("%s was dropped but is in the allowed list", keep)
+		tools.AgentMCPToolKey(mailSvc, "send_email"),
+		tools.AgentMCPToolKey(crmSvc, "get_customer_profile"),
+	})
+	if !restrict || len(legacy) != 0 {
+		t.Fatalf("restrict=%v legacy=%v, want restricting with no legacy", restrict, legacy)
+	}
+	for _, keep := range [][2]string{{mailSvc, "send_email"}, {crmSvc, "get_customer_profile"}} {
+		if !allow(keep[0], keep[1]) {
+			t.Errorf("%s/%s was denied but is granted", keep[0], keep[1])
 		}
 	}
-	for _, gone := range []string{
-		"mcp_CRM-MCP_get_customer_credit_control",
-		"mcp_CRM-MCP_list_receivables",
-		"mcp_mail_selftest",
+	for _, gone := range [][2]string{
+		{mailSvc, "selftest"},
+		{crmSvc, "list_receivables"},
+		{crmSvc, "send_email"}, // right tool name, wrong service
 	} {
-		if registryHas(r, gone) {
-			t.Errorf("%s survived but is not in the allowed list", gone)
+		if allow(gone[0], gone[1]) {
+			t.Errorf("%s/%s was admitted but is not granted", gone[0], gone[1])
 		}
 	}
 }
 
-// A non-empty list that happens to name no MCP tool is a list that grants no
-// MCP tool. There used to be an exception here — such a list was read as
-// "written before per-tool selection existed" and left everything registered —
-// and it made the stored config dishonest: the editor showed the tools
-// unticked while the agent went on calling them.
-func TestAllowlist_ABuiltinOnlyListGrantsNoMCPTools(t *testing.T) {
-	r := registryWith("thinking", "mcp_mail_send_email", "mcp_CRM-MCP_get_customer_profile")
-	cfg := &types.AgentConfig{AllowedTools: []string{"thinking", "knowledge_search"}}
-
-	applyMCPToolAllowlist(context.Background(), r, cfg)
-
-	if got := r.ListTools(); len(got) != 1 || got[0] != "thinking" {
-		t.Errorf("tools = %v, want only the built-in it named", got)
+// A non-empty list that grants no MCP tool is a list that grants no MCP tool.
+// The old "builtin-only list means written-before-this-shipped, skip
+// filtering" compat rule is gone: config that does not mean what it says is
+// worse than config that disarms an agent loudly.
+func TestPredicate_ABuiltinOnlyListGrantsNoMCPTools(t *testing.T) {
+	allow, _, restrict := agentMCPToolPredicate([]string{"thinking", "knowledge_search"})
+	if !restrict {
+		t.Fatal("a non-empty list must restrict")
+	}
+	if allow(mailSvc, "send_email") {
+		t.Error("send_email admitted by a list that never granted it")
 	}
 }
 
-func TestAllowlist_EmptyConfigIsUnconfiguredNotEmptySet(t *testing.T) {
-	r := registryWith("thinking", "mcp_mail_send_email")
-
-	applyMCPToolAllowlist(context.Background(), r, &types.AgentConfig{})
-
-	if !registryHas(r, "mcp_mail_send_email") {
+func TestPredicate_EmptyConfigIsUnconfiguredNotEmptySet(t *testing.T) {
+	_, _, restrict := agentMCPToolPredicate(nil)
+	if restrict {
 		t.Error("an empty AllowedTools was read as an empty set; it means unconfigured")
 	}
 }
 
-// Built-ins are filtered when they are registered. Re-filtering them here would
-// silently drop any that the switch registers without listing.
-func TestAllowlist_NeverTouchesBuiltins(t *testing.T) {
-	r := registryWith("thinking", "cronjob", "mcp_mail_send_email")
-	cfg := &types.AgentConfig{AllowedTools: []string{"mcp_mail_send_email"}}
-
-	applyMCPToolAllowlist(context.Background(), r, cfg)
-
-	for _, builtin := range []string{"thinking", "cronjob"} {
-		if !registryHas(r, builtin) {
-			t.Errorf("built-in %s was dropped; built-ins are not this filter's business", builtin)
-		}
+// Registry-name grants from before the catalog rework cannot be resolved to a
+// service ID. They admit nothing, but they must be reported so the operator
+// learns to re-save the agent instead of debugging a silent loss.
+func TestPredicate_LegacyRegistryNamesAreReportedNotHonored(t *testing.T) {
+	allow, legacy, restrict := agentMCPToolPredicate([]string{
+		"thinking",
+		"mcp_mail_send_email",
+	})
+	if !restrict {
+		t.Fatal("a non-empty list must restrict")
+	}
+	if len(legacy) != 1 || legacy[0] != "mcp_mail_send_email" {
+		t.Errorf("legacy = %v, want the one old-form grant", legacy)
+	}
+	if allow(mailSvc, "send_email") {
+		t.Error("an unresolvable legacy grant must not admit anything")
 	}
 }
 
-// This filter matches MCP tools by a name prefix it declares itself, so that
-// the change touches no upstream file. That trade only holds while the prefix
-// is right — if upstream renames it, the filter would match nothing and every
-// agent would quietly regain the tools it was configured to lose.
-//
-// Failing here is the whole point: it turns a silent policy hole into a red
-// test.
-func TestMCPToolPrefixMatchesReality(t *testing.T) {
-	svc := &types.MCPService{ID: "svc-1", Name: "mail"}
-	real := tools.NewMCPTool(svc, &types.MCPTool{Name: "send_email"}, nil, nil, 0)
-
-	if got := real.Name(); !strings.HasPrefix(got, mcpToolPrefix) {
-		t.Fatalf("a real MCP tool is named %q, which does not start with %q — "+
-			"applyMCPToolAllowlist matches nothing and silently allows every MCP tool",
-			got, mcpToolPrefix)
+// The grant key format is the contract between this predicate, the
+// agent-tools endpoint, and the frontend checkboxes. Pin it.
+func TestAgentMCPToolKeyRoundTrip(t *testing.T) {
+	key := tools.AgentMCPToolKey(mailSvc, "send_email")
+	if key != "mcp:"+mailSvc+":send_email" {
+		t.Fatalf("key = %q", key)
+	}
+	svc, tool, ok := tools.ParseAgentMCPToolKey(key)
+	if !ok || svc != mailSvc || tool != "send_email" {
+		t.Errorf("parse(%q) = %q,%q,%v", key, svc, tool, ok)
+	}
+	for _, bad := range []string{"thinking", "mcp_mail_send_email", "mcp:", "mcp:onlyservice", "mcp::tool"} {
+		if _, _, ok := tools.ParseAgentMCPToolKey(bad); ok {
+			t.Errorf("parse(%q) accepted a non-grant", bad)
+		}
+	}
+	// A tool name containing ':' must survive the round trip; the service ID
+	// segment is a UUID so the first cut is unambiguous.
+	svc, tool, ok = tools.ParseAgentMCPToolKey(tools.AgentMCPToolKey(crmSvc, "ns:reset"))
+	if !ok || svc != crmSvc || tool != "ns:reset" {
+		t.Errorf("colon-bearing tool name broke the round trip: %q %q %v", svc, tool, ok)
 	}
 }

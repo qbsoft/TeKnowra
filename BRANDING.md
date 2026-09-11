@@ -70,6 +70,31 @@ unix / tcp / http / https，于是配置在保存前就被拒：
 
 ---
 
+### 按 agent 的 MCP 工具授权，钩在上游目录的两个卡口上
+
+上游 2026-09 把 MCP 从「逐个注册进工具表」改成了「目录 + 按需调用」
+（`feat(mcp)!: persist tool catalogs`、`refactor(agent): discover and invoke
+MCP tools on demand`）：注册表里只剩一个发现工具和一个 `call_mcp_tool`，
+具体工具由模型运行时 describe 出来。我们原来「注册完再按 allowed_tools
+清扫注册表」的做法从此扫了个寂寞——没有东西可扫，等于全放行。
+
+现在的做法：`internal/agent/tools/mcp_catalog.go`（上游文件）加了三小段——
+`MCPCatalog.agentAllow` 字段、`visibleTools` 里一条过滤、`checkEnabled` 里
+一条复核。这两个函数是所有发现路径和**所有执行路径**共用的卡口（模型自己
+拼 tool_ref 也绕不过 `checkEnabled`），跟上游自己的空间级 enabled 策略在
+同一处生效。入口和键格式在我们自己的文件里：
+`internal/agent/tools/mcp_agent_allowlist.go`。
+
+授权键从注册名换成了 **`mcp:<服务ID>:<工具名>`**。注册名（`mcp_mail_send_email`）
+的服务段来自服务显示名的有损消毒（中文名直接消没），新版还掺了 schema
+哈希——改个名、改个参数定义都会让存下来的授权静默作废，都不配当存储键。
+服务 ID 是 UUID，天生稳定。旧格式条目不再授权任何东西，后端启动 agent 时
+会打 Warn 提醒重新保存工具勾选。
+
+升级时若这三段钩子被上游改动冲掉，`internal/agent/tools/mcp_agent_allowlist_test.go`
+会红（发现路径漏（TestAgentAllowlistFiltersDiscovery）、执行路径漏
+（TestAgentAllowlistBlocksCallsEvenAfterDescribe）都有断言），照着测试补回即可。
+
 ## 三、刻意**没有**改的
 
 | 类别 | 量 | 不改的原因 |
