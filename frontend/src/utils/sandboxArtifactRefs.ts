@@ -1,7 +1,7 @@
 /**
- * 把回答正文里对「沙盒生成文件」的引用，接到 artifact 下载链路上。
+ * 把回答正文里对「沙箱生成文件」的引用，接到 artifact 下载链路上。
  *
- * 模型会用 Markdown 图片语法引用它在沙盒里生成的文件（提示词规定写成
+ * 模型会用 Markdown 图片语法引用它在沙箱里生成的文件（提示词规定写成
  * `![说明](sandbox:文件名)`），服务端在落库前把它改写成该文件的稳定句柄
  * `resource://<handle>` —— 与知识库图片、聊天附件同一种引用形式。两种写法
  * 都指向同一份 `Message.Artifacts`：
@@ -14,11 +14,12 @@
  * 交回默认的受保护图片渲染，而不是显示「文件不可用」。
  *
  * 图片类产物内联显示（带鉴权拉取后换成 blob），其余类型（HTML 图表、CSV、
- * 文档等）渲染成一张卡片，点击后交给 ChatArtifactsDrawer 预览——正文里塞一个
+ * 文档等）渲染成一张卡片，点击后交给右侧沙箱面板的产物页预览——正文里塞一个
  * 1MB 的自包含 HTML iframe 既慢又不安全。
  */
 
 import { escapeHTML } from './security.ts';
+import { renderArtifactFileIcon } from './artifactFileIcon';
 
 /** 与后端 artifactListItem / SSE publicArtifactViews 对齐的最小字段集。 */
 export interface ArtifactRefMeta {
@@ -77,7 +78,7 @@ function parseArtifactRef(href: string): ArtifactRef | null {
 }
 
 /**
- * 该链接目标是否可能是沙盒产物引用。
+ * 该链接目标是否可能是沙箱产物引用。
  *
  * 句柄形式与知识库图片同形，因此这里为真只说明「值得交给产物解析试一次」，
  * 不代表本消息真有这个文件。
@@ -234,16 +235,6 @@ function blobCacheKey(ctx: ArtifactRefContext, index: number): string {
   return `${ctx.sessionId}\u0000${ctx.messageId}\u0000${index}`;
 }
 
-function fileIconSvg(): string {
-  return (
-    '<svg class="artifact-ref-card__glyph" viewBox="0 0 24 24" aria-hidden="true">'
-    + '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z" '
-    + 'fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>'
-    + '<path d="M14 2v6h6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>'
-    + '</svg>'
-  );
-}
-
 // 与 chatMarkdownRenderer 的流式图片骨架同一个类名，样式复用。
 const STREAMING_PLACEHOLDER =
   '<span class="streaming-image-loading"><span class="streaming-image-loading__skeleton"></span></span>';
@@ -259,7 +250,7 @@ function renderCard(fileName: string, hint: string, index: number | null): strin
   const state = index === null ? ' artifact-ref-card--pending' : '';
   return (
     `<span class="artifact-ref-card${state}"${interactive} title="${safeName}">`
-    + `<span class="artifact-ref-card__icon" aria-hidden="true">${fileIconSvg()}</span>`
+    + `<span class="artifact-ref-card__icon" aria-hidden="true">${renderArtifactFileIcon(fileName)}</span>`
     + '<span class="artifact-ref-card__text">'
     + `<span class="artifact-ref-card__name">${safeName}</span>`
     + `<span class="artifact-ref-card__hint">${safeHint}</span>`
@@ -286,7 +277,7 @@ function renderImage(
 /**
  * 渲染一个 Markdown 图片/链接目标。
  *
- * 返回 null 表示这不是沙盒产物引用，调用方应回落到默认渲染（普通图片、
+ * 返回 null 表示这不是沙箱产物引用，调用方应回落到默认渲染（普通图片、
  * `resource://` 受保护图片、外链等一律不受影响）。
  */
 export function renderArtifactReference(args: {

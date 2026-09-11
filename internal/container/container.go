@@ -299,6 +299,10 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	logger.Debugf(ctx, "[Container] Registering session service...")
 	must(container.Provide(service.NewSessionService))
 	must(container.Provide(service.NewTenantSkillService))
+	// The member-facing half of env vars is its own service because its
+	// authority is different in kind: it derives the identity from the context
+	// and touches only that identity's rows.
+	must(container.Provide(service.NewUserEnvService))
 
 	// ArtifactCollector drains skill-generated files from the sandbox on
 	// each agent turn (see spec at
@@ -306,6 +310,11 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	// The factory returns nil when the sandbox backend does not support
 	// per-session file inspection; downstream code guards on nil.
 	must(container.Provide(service.NewArtifactCollectorFromSandboxManager))
+
+	// SandboxTerminalService opens interactive PTYs on session sandboxes for
+	// the frontend terminal panel. First-use provisioning takes a sandbox
+	// config ID already resolved by the WebSocket handler (own or shared agent).
+	must(container.Provide(service.NewSandboxTerminalService))
 
 	logger.Debugf(ctx, "[Container] Registering task enqueuer...")
 	redisAvailable := os.Getenv("REDIS_ADDR") != ""
@@ -428,6 +437,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	) *handler.SandboxSkillHandler {
 		return handler.NewSandboxSkillHandler(s, streams)
 	}))
+	must(container.Provide(handler.NewMeEnvVarHandler))
 	must(container.Provide(handler.NewEvaluationHandler))
 	must(container.Provide(handler.NewInitializationHandler))
 	must(container.Provide(handler.NewAuthHandler))
@@ -444,9 +454,8 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(handler.NewStorageBackendHandler))
 	must(container.Provide(handler.NewCustomAgentHandler))
 	must(container.Provide(handler.NewUserResourceFavoriteHandler))
-	must(container.Provide(service.NewSkillService))
 	must(container.Provide(func(s *service.TenantSkillService) *handler.SkillHandler {
-		return handler.NewSkillHandler(s)
+		return handler.NewSkillHandler(s, s)
 	}))
 	must(container.Provide(handler.NewOrganizationHandler))
 	must(container.Provide(handler.NewMemoryHandler))
@@ -1645,6 +1654,8 @@ func registerWebSearchProviders(registry *infra_web_search.Registry) {
 	registry.Register("zhipu", infra_web_search.NewZhipuProvider)
 	registry.Register("exa", infra_web_search.NewExaProvider)
 	registry.Register("metaso", infra_web_search.NewMetasoProvider)
+	registry.Register("bocha", infra_web_search.NewBochaProvider)
+	registry.Register("brave", infra_web_search.NewBraveProvider)
 }
 
 // registerIMService registers adapter factories, loads enabled channels, and
