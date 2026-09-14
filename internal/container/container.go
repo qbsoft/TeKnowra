@@ -789,6 +789,13 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 			)
 		}
 
+		// TeKnowra fork migrations: own directory, own water-mark table, so
+		// upstream's numbering can never collide with ours again. Details in
+		// database.RunTeKnowraMigrations.
+		if err := database.RunTeKnowraMigrations(migrateDSN); err != nil {
+			logger.Warnf(context.Background(), "TeKnowra fork migration failed: %v", err)
+		}
+
 		// Post-migration: resolve __pending_env__ storage provider markers for historical KBs.
 		// The SQL migration marks KBs that have documents but no provider with "__pending_env__";
 		// we replace that with the actual STORAGE_TYPE from the environment.
