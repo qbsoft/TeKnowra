@@ -18,3 +18,7 @@ cli/acceptance/testdata/**/*.json text eol=lf
 
 # Unified diffs use a space to mark empty context lines.
 patches/browserskill/*.patch whitespace=-blank-at-eol
+
+# Patch files are applied verbatim inside Linux build containers;
+# CRLF conversion on a Windows checkout corrupts every context line.
+patches/** -text
