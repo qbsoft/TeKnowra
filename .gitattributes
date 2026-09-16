@@ -22,3 +22,8 @@ patches/browserskill/*.patch whitespace=-blank-at-eol
 # Patch files are applied verbatim inside Linux build containers;
 # CRLF conversion on a Windows checkout corrupts every context line.
 patches/** -text
+
+# go.mod/go.sum 必须 LF：check-license-bundle.sh 用 awk 读版本号，
+# Windows 检出的 CRLF 会让尾部带 \r，导致 v1.10.0 != v1.10.0 误判。
+go.mod text eol=lf
+go.sum text eol=lf
