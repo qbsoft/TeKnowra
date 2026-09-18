@@ -1303,6 +1303,8 @@ async function handleUseSharedAgentInChat(shared: SharedAgentInfo) {
   const settingsStore = useSettingsStore()
   const menuStore = useMenuStore()
   settingsStore.selectAgent(shared.agent.id, String(shared.source_tenant_id))
+  // TeKnowra: selectAgent 不会设置模式；不补这一行，推理型共享智能体会被当成快速问答（见 Input-field.vue createSession 里的说明）
+  settingsStore.toggleAgent(shared.agent.config?.agent_mode === 'smart-reasoning')
   try {
     const res = await createSessions({})
     if (res?.data?.id) {

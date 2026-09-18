@@ -2052,6 +2052,15 @@ const createSession = async (val: string, delivery: 'inject' | 'after' = 'after'
     actualAgent = builtin || agentToCheck;
   }
   const isAgentMode = actualAgent.config?.agent_mode === 'smart-reasoning';
+  // TeKnowra: 发送前把 store 里的模式对齐到智能体自己的 agent_mode。
+  // 只有下拉选择器那条路会 toggleAgent；从共享空间/智能体列表点「在对话中使用」、
+  // 或由 URL 带 agent_id 进入时只 selectAgent，isAgentEnabled 停在旧值（新用户默认 false），
+  // 推理型智能体就被当成快速问答发出去——后端不挂工具，DeepSeek 把工具调用当正文吐出来
+  // （实测：共享的「经营问数」输出 <｜DSML｜invoke name="list_business_metrics">）。
+  // 只在确实解析到当前选中的智能体时才对齐，避免列表未加载时落到占位的快速问答上误判。
+  if (actualAgent.id === selectedAgentId.value && settingsStore.isAgentEnabled !== isAgentMode) {
+    settingsStore.toggleAgent(isAgentMode);
+  }
   const { keys: notReadyKeys, labels: notReadyReasons } = collectAgentNotReadyReasons(
     actualAgent,
     isAgentMode,

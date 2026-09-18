@@ -35,7 +35,7 @@ export type IntegrationPreviewIcon =
   | { type: 'emoji'; value: string }
 
 /** Sidebar hover preview + Integrations modal nav — add new entries here. */
-export const INTEGRATION_PREVIEW_ITEMS: Array<{
+const ALL_INTEGRATION_PREVIEW_ITEMS: Array<{
   key: IntegrationTab
   icon: IntegrationPreviewIcon
 }> = [
@@ -45,4 +45,8 @@ export const INTEGRATION_PREVIEW_ITEMS: Array<{
   { key: 'cli', icon: { type: 'icon', name: 'code' } },
   { key: 'chrome', icon: { type: 'icon', name: 'extension' } },
   { key: 'claw', icon: { type: 'emoji', value: '🦞' } },
-].filter((item) => !HIDDEN_INTEGRATION_TABS.has(item.key))
+]
+
+export const INTEGRATION_PREVIEW_ITEMS = ALL_INTEGRATION_PREVIEW_ITEMS.filter(
+  (item) => !HIDDEN_INTEGRATION_TABS.has(item.key),
+)
