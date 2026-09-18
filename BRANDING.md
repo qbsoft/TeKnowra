@@ -123,7 +123,7 @@ developed by Tencent" 开头，模型会照着它向用户自我介绍（问「�
 | 设置里的「版本信息」页 | `Settings.vue` 把 `platform` 分组清空；页面仍可用 `?section=system` 打开 |
 | 各设置页的「查看文档/指南」链接（7 个文件） | `frontend/src/assets/teknowra-branding.css` 一条全局规则隐藏所有指向 `github.com/Tencent/WeKnora` 的链接，`main.ts` 引入；那 7 个上游文件一行没改 |
 | 靠点击打开的两处 | 知识图谱指南的 `.graph-guide-link` 类名唯一，样式直接选中；API 文档链接在 `ApiIntegrationSettings.vue` 补了 `.upstream-doc-link` 类 |
-| 「CLI」「Claw Skill」两个集成页 | `frontend/src/config/integrations.ts` 的 `HIDDEN_INTEGRATION_TABS` 把它们从导航列表里滤掉（设置导航和侧栏悬浮预览共用这一个列表）。它们介绍的是上游发布的外部产物，本产品没有对应物。`INTEGRATION_TABS` 没动，页面仍可用 `?section=` 直接打开 |
+| 「CLI」「Chrome 插件」「Claw Skill」三个集成页 | `frontend/src/config/integrations.ts` 的 `HIDDEN_INTEGRATION_TABS` 把它们从导航列表里滤掉（设置导航和侧栏悬浮预览共用这一个列表）。它们介绍的是上游发布的外部产物，本产品没有对应物（Chrome 插件是上游发在 Chrome 商店的「知识管理助手」，源码不在本仓库，弹窗里的 WeKnora 字样改不了；与「浏览器连接」的 BrowserSkill 扩展无关）。`INTEGRATION_TABS` 没动，页面仍可用 `?section=` 直接打开 |
 
 ### 其余用户可见的字符串（2026-09-18）
 
