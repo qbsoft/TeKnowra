@@ -95,6 +95,46 @@ MCP tools on demand`）：注册表里只剩一个发现工具和一个 `call_mc
 会红（发现路径漏（TestAgentAllowlistFiltersDiscovery）、执行路径漏
 （TestAgentAllowlistBlocksCallsEvenAfterDescribe）都有断言），照着测试补回即可。
 
+### 提示词里的品牌：加载时替换，不改 yaml（2026-09-18）
+
+上游 `config/prompt_templates/*.yaml` 的每个人设都以 "You are WeKnora, ...
+developed by Tencent" 开头，模型会照着它向用户自我介绍（问「你是谁」就答
+「腾讯开发的 WeKnora」）。第一轮品牌改造漏了这一块。
+
+做法：`internal/config/branding_teknowra.go`（我们自己的文件）在模板读进来时
+把 `WeKnora` → `TeKnowra`、`developed by Tencent` → `developed by TyerSoft`；
+上游文件 `config.go` 的 `loadPromptTemplates` 里只挂了一行调用。yaml 本身一字未动
+——它是上游改得很勤的文件，逐行改每次合并都要冲突；而且上游新增的人设会被自动换掉。
+
+只替换大小写完全一致的 `WeKnora`。小写的 `.weknora/requirements.json` 是技能机制
+真实依赖的路径，不能动。合并上游后那一行钩子若被冲掉，
+`branding_teknowra_test.go` 的 `TestLoadPromptTemplatesAppliesRebrand` 会红
+（它用仓库里真实的模板目录走一遍加载）。
+
+注意：智能体一旦在界面上保存过，提示词就落进数据库 `custom_agents.config`，
+不再读模板。库里的旧提示词要另行处理（目前只有内置的「技能安装器」还带着，
+用户看不到）。
+
+### 指向上游仓库的入口：一个开关 + 一条全局样式（2026-09-18）
+
+| 入口 | 做法 |
+|---|---|
+| 用户菜单的「帮助与文档」「GitHub ★」 | `UserMenu.vue` 用 `SHOW_UPSTREAM_LINKS` 开关包住，代码保留 |
+| 设置里的「版本信息」页 | `Settings.vue` 把 `platform` 分组清空；页面仍可用 `?section=system` 打开 |
+| 各设置页的「查看文档/指南」链接（7 个文件） | `frontend/src/assets/teknowra-branding.css` 一条全局规则隐藏所有指向 `github.com/Tencent/WeKnora` 的链接，`main.ts` 引入；那 7 个上游文件一行没改 |
+| 靠点击打开的两处 | 知识图谱指南的 `.graph-guide-link` 类名唯一，样式直接选中；API 文档链接在 `ApiIntegrationSettings.vue` 补了 `.upstream-doc-link` 类 |
+
+### 其余用户可见的字符串（2026-09-18）
+
+| 位置 | 用户在哪看到 |
+|---|---|
+| `browserskill/authorization.go` 的 `service_name` | Chrome 里任务标签组的名字 |
+| `mcp/oauth_manager.go` 的 `clientRegistrationName`、`mcp/client.go` 的客户端名 | 对方系统（如 CRM）的 OAuth 授权确认页；只影响之后新注册的客户端 |
+| `im/feishu/adapter.go`、`im/service.go` | 飞书卡片标题、IM 里的授权提示 |
+| `handler/sandbox_check.go` 两处 | 沙箱自检的提示文案 |
+| 语言包 `windowHint` / 沙箱密钥说明 / `dockerHostRisk`（中英韩俄） | 设置页说明文字 |
+| `FAQEntryManager.vue` 的示例条目、`chunkingSamples.ts` 的示例文档 | FAQ 示例、分块预览的样例（连同里面的上游仓库和镜像地址一起换成了示意地址） |
+
 ## 三、刻意**没有**改的
 
 | 类别 | 量 | 不改的原因 |
@@ -104,7 +144,10 @@ MCP tools on demand`）：注册表里只剩一个发现工具和一个 `call_mc
 | Docker 镜像 `wechatopenai/weknora-*` | 5 处 | 上游发布的镜像，改了拉不下来 |
 | 数据库名 `WeKnora`、Redis 命名空间 | | 改了连不上现有数据 |
 | **localStorage 键名**（`WeKnora_theme`、`weknora_refresh_token` 等 15 个） | | 改了所有用户**掉登录、丢设置** |
-| i18n 四个语言包（各 42 处） | 168 处 | 按产品决定保持原样 |
+| i18n 里的 WeKnora Cloud 相关文案、日语语言包 | | Cloud 功能已整体隐藏，文案看不到；日语暂无用户 |
+| 「WeKnora CLI」「WeKnora Skill」集成页的标题与安装说明 | | 指向上游发布的外部产物（命令就叫 `weknora`），只改标题会前后对不上，待产品决定是隐藏还是保留 |
+| `weknora-widget.js` 的全局对象名 `WeKnora.init(...)` | | 已被 CRM 嵌入使用，改了要同步改调用方；外人只有开控制台才看得到 |
+| 各连接器/搜索/Webhook 的 User-Agent、向量库集合描述 | | 只出现在对方服务器日志或数据库管理界面 |
 | WeKnora Skill / Chrome 插件相关文案 | | 指向上游发布的外部产物，待定 |
 
 ---

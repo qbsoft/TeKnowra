@@ -80,7 +80,7 @@
             <label>{{ $t('tenant.api.docLabel') }}</label>
             <p>
               {{ $t('tenant.api.docDescription') }}
-              <a class="doc-link" @click="openApiDoc">
+              <a class="doc-link upstream-doc-link" @click="openApiDoc">
                 {{ $t('tenant.api.openDoc') }}
                 <t-icon name="link" class="link-icon" />
               </a>

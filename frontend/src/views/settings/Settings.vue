@@ -457,7 +457,10 @@ const navGroups = computed<NavGroup[]>(() => {
     {
       key: 'platform',
       label: t('settings.navGroups.platform'),
-      items: pickItems(['system']),
+      // 「版本信息」页展示的是上游 WeKnora 的版本号、迁移状态和指向上游仓库的链接，
+      // 对本产品用户没有意义，已从导航隐藏（分组为空会被下面的 filter 整组去掉）。
+      // 页面本身保留：排查问题时仍可用 ?section=system 直接打开。
+      items: pickItems([]),
     },
   ].filter((group) => group.items.length > 0)
 })

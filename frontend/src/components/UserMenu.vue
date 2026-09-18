@@ -111,6 +111,12 @@
           <t-icon name="server" class="menu-icon" />
           <span>{{ $t('settings.navGroups.systemAdministration') }}</span>
         </div>
+        <!--
+          「帮助与文档」「GitHub」两项指向上游 Tencent/WeKnora 的仓库与文档，
+          本产品不对用户暴露，已隐藏（SHOW_UPSTREAM_LINKS）。用开关包住而不是删掉，
+          合并上游时这一段不容易冲突。
+        -->
+        <template v-if="SHOW_UPSTREAM_LINKS">
         <div class="menu-divider"></div>
         <div class="menu-item" @click="openDocs">
           <t-icon name="help-circle" class="menu-icon" />
@@ -133,6 +139,7 @@
             </svg>
           </span>
         </div>
+        </template>
         <template v-if="!authStore.isLiteMode">
           <div class="menu-divider"></div>
           <div class="menu-item danger" @click="handleLogout">
@@ -502,6 +509,9 @@ const reopenGuide = () => {
   menuVisible.value = false
   openNewUserGuide()
 }
+
+// 上游仓库/文档入口的总开关，见模板里的说明
+const SHOW_UPSTREAM_LINKS = false
 
 const openDocs = () => {
   menuVisible.value = false

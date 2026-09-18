@@ -1,0 +1,24 @@
+/*
+ * TeKnowra 品牌样式 —— fork 自己的文件，上游没有。
+ *
+ * 上游在各设置页里散落着「查看文档 / 查看指南」链接，全部指向
+ * github.com/Tencent/WeKnora 的文档。本产品不向用户暴露上游仓库，统一隐藏。
+ *
+ * 为什么用一条全局样式而不是逐个改模板：
+ *   - 涉及 7 个上游文件（模型、沙箱、成员权限、IM 集成、知识图谱……），
+ *     逐个加 v-if 意味着每次合并上游都多 7 处潜在冲突；
+ *   - 上游以后新增的同类链接会被自动隐藏，不用追着补。
+ * 这些链接都是自成一体的元素（跟在说明文字后面，自带文字和图标），
+ * 整个隐藏不会留下半截句子。
+ *
+ * 属性选择器只管得到 href 链接。靠 @click + window.open 打开的有两处：
+ *   - GraphSettings.vue 的 .graph-guide-link（类名本身唯一，直接选中）
+ *   - ApiIntegrationSettings.vue 的 API 文档链接（在模板里补了 .upstream-doc-link）
+ * 完整清单见仓库根目录 BRANDING.md。
+ */
+a[href*="github.com/Tencent/WeKnora"],
+a[href*="weknora.weixin.qq.com"],
+.graph-guide-link,
+.upstream-doc-link {
+  display: none !important;
+}

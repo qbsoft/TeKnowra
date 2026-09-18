@@ -5153,7 +5153,7 @@ export default {
   },
   envVarSettings: {
     title: '샌드박스 키',
-    description: '스킬과 샌드박스에 쓰는 개인 키이며, WeKnora 시스템이나 배포 설정이 아닙니다.',
+    description: '스킬과 샌드박스에 쓰는 개인 키이며, TeKnowra 시스템이나 배포 설정이 아닙니다.',
     helpAria: '샌드박스 키 설명',
     introPersonalTitle: '나만의 값',
     introPersonalBody: '내 대화와 실행에만 주입됩니다. 다른 구성원은 볼 수 없고, 그들의 값이 내 값을 대체하지도 않습니다.',
@@ -5372,7 +5372,7 @@ export default {
       dockerDisabledAlert: '이 배포에서는 Docker 샌드박스가 켜져 있지 않습니다',
       dockerDisabledHint: '로컬 docker.sock은 호스트 root와 같습니다. 단일 머신 프라이빗 설치에서는 시스템 관리자가 설정 → 시스템 설정 → 네트워크 보안에서 켤 수 있습니다.',
       dockerDisabledCard: '이 배포에서 Docker 샌드박스가 꺼져 있어 이 구성은 컨테이너를 만들지 않습니다',
-      dockerHostRisk: '비우거나 unix:// 를 쓰면 WeKnora가 있는 머신의 Docker 데몬을 사용하며, 그 권한은 해당 머신의 root와 같습니다. 프라이빗 단일 노드에만 쓰세요. 여러 워크스페이스가 같은 호스트를 쓰는 경우에는 Cube 또는 E2B를 쓰세요. 원격 tcp:// 는 TLS 인증서 디렉터리가 필요합니다.',
+      dockerHostRisk: '비우거나 unix:// 를 쓰면 TeKnowra가 있는 머신의 Docker 데몬을 사용하며, 그 권한은 해당 머신의 root와 같습니다. 프라이빗 단일 노드에만 쓰세요. 여러 워크스페이스가 같은 호스트를 쓰는 경우에는 Cube 또는 E2B를 쓰세요. 원격 tcp:// 는 TLS 인증서 디렉터리가 필요합니다.',
       addConfig: '샌드박스 추가',
       viewClusterGuide: 'Cluster setup guide',
       configName: 'Config name',

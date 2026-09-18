@@ -385,7 +385,7 @@ func (c *mcpGoClient) Initialize(ctx context.Context) (*InitializeResult, error)
 			ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
 			Capabilities:    mcp.ClientCapabilities{},
 			ClientInfo: mcp.Implementation{
-				Name:    "WeKnora",
+				Name:    "TeKnowra",
 				Version: "1.0.0",
 			},
 		},

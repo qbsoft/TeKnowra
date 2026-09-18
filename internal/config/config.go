@@ -1114,6 +1114,9 @@ func loadPromptTemplates(configDir string) (*PromptTemplatesConfig, error) {
 			return nil, fmt.Errorf("failed to read %s: %w", filename, err)
 		}
 
+		// TeKnowra: 模板里的上游品牌(WeKnora / Tencent)在这里统一换掉,见 branding_teknowra.go
+		data = rebrandPromptTemplate(data)
+
 		var file promptTemplateFile
 		if err := yaml.Unmarshal(data, &file); err != nil {
 			return nil, fmt.Errorf("failed to parse %s: %w", filename, err)
