@@ -1,5 +1,6 @@
 import { onMounted, onUnmounted, ref, type Ref } from 'vue'
 import { useRoute } from 'vue-router'
+import { handleEmbedOAuthLanding } from '@/api/embed/oauthLanding'
 import { useI18n } from 'vue-i18n'
 import {
   createEmbedSession,
@@ -208,6 +209,7 @@ export function useEmbedBridge(channelId: Ref<string>) {
   }
 
   const start = async () => {
+    if (handleEmbedOAuthLanding((message) => { loadError.value = message })) return
     removeHostListener = onEmbedHostContext((payload) => {
       hostContext.value = { ...hostContext.value, ...payload }
     })

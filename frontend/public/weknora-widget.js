@@ -236,6 +236,7 @@
           type: 'provide_token',
           token: tok,
           channel_id: channelId,
+          host_user: opts.hostUser || opts.host_user || '',
         });
       }).catch(function () { /* already logged; iframe stays awaiting */ });
     }

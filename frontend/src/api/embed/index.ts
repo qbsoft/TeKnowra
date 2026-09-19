@@ -1,5 +1,6 @@
 import { get, post, put, del } from '@/utils/request'
 import { resolveEmbedBaseUrl } from '@/utils/embedBaseUrl'
+import { embedHostUserSuffix, setEmbedHostUser } from './hostUser'
 
 export interface EmbedChannel {
   id: string
@@ -66,7 +67,7 @@ export const EMBED_CHAT_SESSION_STORAGE_PREFIX = 'weknora-embed-session:'
 export const EMBED_VISITOR_STORAGE_PREFIX = 'weknora-embed-visitor:'
 
 export function embedVisitorStorageKey(channelId: string): string {
-  return `${EMBED_VISITOR_STORAGE_PREFIX}${channelId}`
+  return `${EMBED_VISITOR_STORAGE_PREFIX}${channelId}${embedHostUserSuffix()}`
 }
 
 /**
@@ -123,7 +124,7 @@ export function getOrCreateEmbedVisitorId(channelId: string): string {
 }
 
 export function embedChatSessionStorageKey(channelId: string): string {
-  return `${EMBED_CHAT_SESSION_STORAGE_PREFIX}${channelId}`
+  return `${EMBED_CHAT_SESSION_STORAGE_PREFIX}${channelId}${embedHostUserSuffix()}`
 }
 
 /** Drop a persisted embed chat session so the next load starts fresh. */
@@ -740,6 +741,7 @@ export function onEmbedHostToken(handler: (token: string, channelId?: string) =>
     if (!isTrustedParentMessage(e) || e.data.type !== 'provide_token') return
     const token = String(e.data.token || '').trim()
     if (!token) return
+    setEmbedHostUser(e.data.host_user)
     handler(token, e.data.channel_id)
   }
   window.addEventListener('message', listener)

@@ -157,6 +157,27 @@ A 空间把挂了按人授权 MCP 服务的智能体共享给 B 空间的用户�
 合并上游后那几行若被冲掉，`mcp_oauth_shared_agent_test.go` 的
 `TestMCPOAuthEndpointsUseSharedAgentTenant` 会红；`TestOAuthTenantFor` 覆盖全部放行/拒绝分支。
 
+### 嵌入页按宿主用户分开存授权和对话（2026-09-19）
+
+设计与取舍见 `docs/embed-per-user-authorization.md`。嵌入页在浏览器里按「渠道」存访客编号
+（MCP 按人授权的令牌挂在它名下）和当前对话的指针，整个浏览器只有一份——同一台电脑上换个人
+登录宿主系统，用的还是上一个人的授权和对话。宿主在 `WeKnora.init({ hostUser })` 里报上当前用户，
+嵌入页把它拼进这两样东西的存储键。没传 `hostUser` 时键与上游逐字节一致。后端不改。
+
+逻辑在我们自己的 `frontend/src/api/embed/hostUser.ts`。上游文件里的钩子（各一行）：
+
+- `frontend/src/api/embed/index.ts`：`embedVisitorStorageKey`、`embedChatSessionStorageKey`
+  末尾拼 `embedHostUserSuffix()`；`onEmbedHostToken` 里在调 handler **之前**调
+  `setEmbedHostUser(e.data.host_user)`（顺序要紧：bootstrap 一进去就读访客编号）。
+- `frontend/public/weknora-widget.js`：`provide_token` 消息带上 `host_user`。
+
+顺带：授权弹窗走完后落在不带 token 的嵌入页地址上，上游显示「缺少嵌入渠道或 Token」，像报错。
+`frontend/src/api/embed/oauthLanding.ts` 认出这种落脚并改成「授权成功，可以关闭此窗口」；
+钩子是 `composables/useEmbedBridge.ts` 的 `start()` 开头一行。
+
+合并上游后钩子若被冲掉，`hostUser.test.ts` / `oauthLanding.test.ts` 会红
+（`cd frontend && npx tsx --test src/api/embed/*.test.ts`）。
+
 ## 三、刻意**没有**改的
 
 | 类别 | 量 | 不改的原因 |
