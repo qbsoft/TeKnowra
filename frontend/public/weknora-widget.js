@@ -38,6 +38,36 @@
   var instance = null;
   var listeners = {};
 
+  // ── TeKnowra：启动按钮的图标 ──────────────────────────────────────────────
+  // 上游用的是 emoji 字符（💬 / ✕）。emoji 长什么样由操作系统的字体决定，Windows 上是一个
+  // 带灰色阴影、发虚的气泡，压在纯色圆底上很难看，各平台还不一致。换成内联的矢量线条图标。
+  // 气泡轮廓取自 Lucide 的 message-circle（ISC 许可）。
+  // 钩子共 3 处（搜 tkLauncher）；被上游冲掉的话 widgetLauncher.test.ts 会红。
+  var TK_ICON_CHAT = '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+    'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>' +
+    '<path d="M8 12h.01M12 12h.01M16 12h.01" stroke-width="2.4"/></svg>';
+  var TK_ICON_CLOSE = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+    'stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+
+  function tkLauncherIcon(launcher, open) {
+    launcher.innerHTML = open ? TK_ICON_CLOSE : TK_ICON_CHAT;
+  }
+
+  function tkLauncherStyle(launcher) {
+    var s = launcher.style;
+    s.display = 'flex';
+    s.alignItems = 'center';
+    s.justifyContent = 'center';
+    s.padding = '0';
+    s.lineHeight = '0';
+    s.opacity = '1';
+    s.boxShadow = '0 6px 20px rgba(0,0,0,.16), 0 2px 6px rgba(0,0,0,.10)';
+    s.transition = 'transform .18s ease, box-shadow .18s ease, opacity .2s';
+    launcher.addEventListener('mouseenter', function () { s.transform = 'scale(1.06)'; });
+    launcher.addEventListener('mouseleave', function () { s.transform = 'none'; });
+  }
+
   function normalizePosition(pos) {
     if (!pos || POSITIONS.indexOf(pos) < 0) return DEFAULT_POSITION;
     return pos;
@@ -157,7 +187,7 @@
     var launcher = document.createElement('button');
     launcher.type = 'button';
     launcher.setAttribute('aria-label', title);
-    launcher.textContent = '💬';
+    tkLauncherIcon(launcher, false);
     launcher.style.cssText = [
       'position:fixed',
       'z-index:2147483000',
@@ -174,6 +204,7 @@
       'transition:opacity .2s',
       positionStyles(position, 'launcher'),
     ].join(';');
+    tkLauncherStyle(launcher);
 
     var panel = document.createElement('div');
     panel.style.cssText = [
@@ -334,7 +365,7 @@
     function setOpen(next) {
       panelOpen = !!next;
       panel.style.display = panelOpen ? 'block' : 'none';
-      launcher.textContent = panelOpen ? '✕' : '💬';
+      tkLauncherIcon(launcher, panelOpen);
       if (panelOpen) {
         emit('open', { channelId: channelId });
       } else {

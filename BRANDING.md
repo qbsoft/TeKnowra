@@ -178,6 +178,13 @@ A 空间把挂了按人授权 MCP 服务的智能体共享给 B 空间的用户�
 合并上游后钩子若被冲掉，`hostUser.test.ts` / `oauthLanding.test.ts` 会红
 （`cd frontend && npx tsx --test src/api/embed/*.test.ts`）。
 
+### 浮窗启动按钮的图标（2026-09-20）
+
+上游用 emoji 字符（💬 / ✕）当图标，长相由操作系统字体决定，Windows 上是个带灰影、发虚的气泡，
+压在纯色圆底上很难看。`frontend/public/weknora-widget.js` 顶部加了一小块 fork 自己的代码
+（`tkLauncherIcon` / `tkLauncherStyle`，内联矢量图标 + 居中 + 悬停放大），上游代码里钩子 3 处
+（搜 `tkLauncher`）。被冲掉的话 `frontend/src/api/embed/widgetLauncher.test.ts` 会红。
+
 ## 三、刻意**没有**改的
 
 | 类别 | 量 | 不改的原因 |
