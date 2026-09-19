@@ -136,6 +136,27 @@ developed by Tencent" 开头，模型会照着它向用户自我介绍（问「�
 | 语言包 `windowHint` / 沙箱密钥说明 / `dockerHostRisk`（中英韩俄） | 设置页说明文字 |
 | `FAQEntryManager.vue` 的示例条目、`chunkingSamples.ts` 的示例文档 | FAQ 示例、分块预览的样例（连同里面的上游仓库和镜像地址一起换成了示意地址） |
 
+### 共享智能体的 MCP 按人授权：授权接口要跟着换到源空间（2026-09-19）
+
+A 空间把挂了按人授权 MCP 服务的智能体共享给 B 空间的用户时，对话运行时平台用源空间（A）
+解析模型/知识库/MCP，OAuth 令牌也按「源空间 + 本人」查；但授权这几个接口（取授权地址 /
+查状态 / 撤销 / 确认 / 取消）按的是请求方自己的空间（B）——B 里没有这个服务，对话里弹出的
+授权卡片点了就是 `MCP service not found`。共享出去的按人授权智能体别人永远用不了。
+
+做法：这五个接口接受可选的 `?agent_id=&agent_source_tenant_id=`，带了就换成源空间；不带则
+与上游行为完全一致。逻辑在我们自己的 `internal/handler/mcp_oauth_shared_agent.go`，
+上游文件 `internal/handler/mcp_oauth.go` 里每个接口只改了取空间那一行，外加构造函数多收一个
+`AgentShareService`。前端 `McpOAuthCard.vue` 在用共享智能体时带上这两个参数
+（`api/mcp-service.ts` 的四个函数各多一个可选参数）。
+
+安全边界：放行的是「对别的空间的服务发起授权」，所以必须同时满足——①请求方空间确实被共享了
+这个智能体（复用平台的 `GetSharedAgentForTenant`）；②这个智能体确实用了这个 MCP 服务
+（否则拿一个共享智能体当钥匙就能授权源空间里任意服务）。任一不满足即 403，绝不回退到源空间。
+令牌仍记在请求方本人名下。
+
+合并上游后那几行若被冲掉，`mcp_oauth_shared_agent_test.go` 的
+`TestMCPOAuthEndpointsUseSharedAgentTenant` 会红；`TestOAuthTenantFor` 覆盖全部放行/拒绝分支。
+
 ## 三、刻意**没有**改的
 
 | 类别 | 量 | 不改的原因 |

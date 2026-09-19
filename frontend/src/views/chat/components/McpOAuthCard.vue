@@ -34,6 +34,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { useI18n } from 'vue-i18n'
+import { useSettingsStore } from '@/stores/settings'
 import {
   cancelMCPOAuth,
   getMCPOAuthAuthorizeURL,
@@ -158,7 +159,7 @@ const skip = async () => {
         props.pendingId,
       )
     } else {
-      await cancelMCPOAuth(props.pendingId)
+      await cancelMCPOAuth(props.pendingId, sharedAgentScope.value)
     }
   } catch (e: any) {
     const msg = e?.response?.data?.error?.message || e?.message || t('agentStream.mcpOAuth.skipFailed')
@@ -167,6 +168,15 @@ const skip = async () => {
     canceling.value = false
   }
 }
+
+// TeKnowra: 当前对话用的是别的空间共享来的智能体时，授权要落到那个源空间（MCP 服务在那边），
+// 后端据此换空间并校验共享关系。用自己空间的智能体时为 undefined，行为与原来一致。
+const settingsStore = useSettingsStore()
+const sharedAgentScope = computed(() => {
+  const sourceTenantId = settingsStore.settings.selectedAgentSourceTenantId
+  const agentId = settingsStore.settings.selectedAgentId
+  return sourceTenantId && agentId ? { agentId, sourceTenantId: String(sourceTenantId) } : undefined
+})
 
 const authorize = async () => {
   if (props.resolved || authorizing.value) return
@@ -189,7 +199,7 @@ const authorize = async () => {
       : await getMCPOAuthAuthorizeURL(props.serviceId, {
         redirect_uri: redirectUri,
         frontend_redirect: frontendRedirect,
-      })
+      }, sharedAgentScope.value)
     if (!authorization.authorizationUrl || !authorization.authorizationAttempt) {
       MessagePlugin.error(t('agentStream.mcpOAuth.startFailed'))
       authorizing.value = false
@@ -210,7 +220,7 @@ const authorize = async () => {
             props.serviceId,
             authorization.authorizationAttempt,
           )
-          : await getMCPOAuthStatus(props.serviceId, authorization.authorizationAttempt)
+          : await getMCPOAuthStatus(props.serviceId, authorization.authorizationAttempt, sharedAgentScope.value)
       } catch {
         /* transient; keep polling */
       }
@@ -229,7 +239,7 @@ const authorize = async () => {
               { service_id: props.serviceId, decision: 'authorize' },
             )
           } else {
-            await resolveMCPOAuth(props.pendingId, { service_id: props.serviceId, decision: 'authorize' })
+            await resolveMCPOAuth(props.pendingId, { service_id: props.serviceId, decision: 'authorize' }, sharedAgentScope.value)
             try {
               await refreshMCPMetadata(props.serviceId)
             } catch {

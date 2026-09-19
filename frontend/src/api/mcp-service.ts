@@ -246,11 +246,29 @@ export interface MCPOAuthStatus {
 
 // Begin authorization for the current user. The attempt id binds polling to
 // this popup, so an older stored token cannot be mistaken for fresh consent.
+// TeKnowra: 共享智能体场景。带上它，后端会把 OAuth 操作换到智能体所属的源空间，并校验
+// 「本空间确实被共享了这个智能体、且它用了这个服务」（见 internal/handler/mcp_oauth_shared_agent.go）。
+// 不传则与原行为完全一致。
+export interface MCPOAuthSharedAgentScope {
+  agentId: string
+  sourceTenantId: string
+}
+
+function sharedAgentQuery(scope: MCPOAuthSharedAgentScope | undefined, first: boolean): string {
+  if (!scope?.agentId || !scope?.sourceTenantId) return ''
+  return `${first ? '?' : '&'}agent_id=${encodeURIComponent(scope.agentId)}`
+    + `&agent_source_tenant_id=${encodeURIComponent(scope.sourceTenantId)}`
+}
+
 export async function getMCPOAuthAuthorizeURL(
   serviceId: string,
-  body: { redirect_uri: string; frontend_redirect?: string }
+  body: { redirect_uri: string; frontend_redirect?: string },
+  sharedAgent?: MCPOAuthSharedAgentScope,
 ): Promise<MCPOAuthAuthorization> {
-  const response: any = await post(`/api/v1/mcp-services/${serviceId}/oauth/authorize-url`, body)
+  const response: any = await post(
+    `/api/v1/mcp-services/${serviceId}/oauth/authorize-url${sharedAgentQuery(sharedAgent, true)}`,
+    body,
+  )
   const data = response.data ?? response
   return {
     authorizationUrl: data?.authorization_url ?? '',
@@ -262,11 +280,14 @@ export async function getMCPOAuthAuthorizeURL(
 export async function getMCPOAuthStatus(
   serviceId: string,
   authorizationAttempt?: string,
+  sharedAgent?: MCPOAuthSharedAgentScope,
 ): Promise<boolean> {
   const query = authorizationAttempt
     ? `?authorization_attempt=${encodeURIComponent(authorizationAttempt)}`
     : ''
-  const response: any = await get(`/api/v1/mcp-services/${serviceId}/oauth/status${query}`)
+  const response: any = await get(
+    `/api/v1/mcp-services/${serviceId}/oauth/status${query}${sharedAgentQuery(sharedAgent, query === '')}`,
+  )
   return Boolean((response.data ?? response)?.authorized)
 }
 
@@ -300,13 +321,23 @@ export async function resolveToolApproval(
 // the token exists before unblocking the paused tool call.
 export async function resolveMCPOAuth(
   pendingId: string,
-  body: { service_id: string; decision?: 'authorize' | 'cancel' }
+  body: { service_id: string; decision?: 'authorize' | 'cancel' },
+  sharedAgent?: MCPOAuthSharedAgentScope,
 ): Promise<void> {
-  await post(`/api/v1/agent/mcp-oauth-resolutions/${encodeURIComponent(pendingId)}`, body)
+  await post(
+    `/api/v1/agent/mcp-oauth-resolutions/${encodeURIComponent(pendingId)}${sharedAgentQuery(sharedAgent, true)}`,
+    body,
+  )
 }
 
-export async function cancelMCPOAuth(pendingId: string): Promise<void> {
-  await post(`/api/v1/agent/mcp-oauth-resolutions/${encodeURIComponent(pendingId)}/cancel`, {})
+export async function cancelMCPOAuth(
+  pendingId: string,
+  sharedAgent?: MCPOAuthSharedAgentScope,
+): Promise<void> {
+  await post(
+    `/api/v1/agent/mcp-oauth-resolutions/${encodeURIComponent(pendingId)}/cancel${sharedAgentQuery(sharedAgent, true)}`,
+    {},
+  )
 }
 
 // Persisted directory: GET never opens an upstream MCP connection.

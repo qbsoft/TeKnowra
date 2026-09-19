@@ -24,6 +24,8 @@ type MCPOAuthHandler struct {
 	mcpManager *mcp.MCPManager
 	svc        interfaces.MCPServiceService
 	gate       *approval.Gate
+	// agentShare 只用于共享智能体场景的空间解析，见 mcp_oauth_shared_agent.go
+	agentShare interfaces.AgentShareService
 }
 
 // NewMCPOAuthHandler constructs the handler.
@@ -32,8 +34,9 @@ func NewMCPOAuthHandler(
 	mcpManager *mcp.MCPManager,
 	svc interfaces.MCPServiceService,
 	gate *approval.Gate,
+	agentShare interfaces.AgentShareService,
 ) *MCPOAuthHandler {
-	return &MCPOAuthHandler{oauth: oauth, mcpManager: mcpManager, svc: svc, gate: gate}
+	return &MCPOAuthHandler{oauth: oauth, mcpManager: mcpManager, svc: svc, gate: gate, agentShare: agentShare}
 }
 
 func mcpOAuthPrincipalsFromContext(ctx *gin.Context) (tokenPrincipal types.Principal, gateUserID string) {
@@ -72,7 +75,12 @@ type mcpOAuthAuthorizeRequest struct {
 func (h *MCPOAuthHandler) AuthorizeURL(c *gin.Context) {
 	ctx := c.Request.Context()
 	serviceID := c.Param("id")
-	tenantID := c.GetUint64(types.TenantIDContextKey.String())
+	// TeKnowra: 共享智能体时换成源空间并校验共享关系，见 mcp_oauth_shared_agent.go
+	tenantID, tenantErr := h.oauthTenantFor(c, serviceID)
+	if tenantErr != nil {
+		c.Error(tenantErr)
+		return
+	}
 	principal, _ := mcpOAuthPrincipalsFromContext(c)
 	if tenantID == 0 || !principal.Valid() {
 		c.Error(errors.NewUnauthorizedError("authentication required"))
@@ -184,7 +192,12 @@ func (h *MCPOAuthHandler) Callback(c *gin.Context) {
 func (h *MCPOAuthHandler) Status(c *gin.Context) {
 	ctx := c.Request.Context()
 	serviceID := c.Param("id")
-	tenantID := c.GetUint64(types.TenantIDContextKey.String())
+	// TeKnowra: 共享智能体时换成源空间并校验共享关系，见 mcp_oauth_shared_agent.go
+	tenantID, tenantErr := h.oauthTenantFor(c, serviceID)
+	if tenantErr != nil {
+		c.Error(tenantErr)
+		return
+	}
 	principal, _ := mcpOAuthPrincipalsFromContext(c)
 	if tenantID == 0 || !principal.Valid() {
 		c.Error(errors.NewUnauthorizedError("authentication required"))
@@ -233,7 +246,12 @@ func (h *MCPOAuthHandler) Status(c *gin.Context) {
 func (h *MCPOAuthHandler) Revoke(c *gin.Context) {
 	ctx := c.Request.Context()
 	serviceID := c.Param("id")
-	tenantID := c.GetUint64(types.TenantIDContextKey.String())
+	// TeKnowra: 共享智能体时换成源空间并校验共享关系，见 mcp_oauth_shared_agent.go
+	tenantID, tenantErr := h.oauthTenantFor(c, serviceID)
+	if tenantErr != nil {
+		c.Error(tenantErr)
+		return
+	}
 	principal, _ := mcpOAuthPrincipalsFromContext(c)
 	if tenantID == 0 || !principal.Valid() {
 		c.Error(errors.NewUnauthorizedError("authentication required"))
@@ -279,7 +297,12 @@ type resolveMCPOAuthBody struct {
 func (h *MCPOAuthHandler) ResolveMCPOAuth(c *gin.Context) {
 	ctx := c.Request.Context()
 	pendingID := c.Param("pending_id")
-	tenantID := c.GetUint64(types.TenantIDContextKey.String())
+	// TeKnowra: 共享智能体时换成源空间并校验共享关系，见 mcp_oauth_shared_agent.go
+	tenantID, tenantErr := h.oauthTenantFor(c, "")
+	if tenantErr != nil {
+		c.Error(tenantErr)
+		return
+	}
 	principal, gateUserID := mcpOAuthPrincipalsFromContext(c)
 	if tenantID == 0 || !principal.Valid() || gateUserID == "" {
 		c.Error(errors.NewUnauthorizedError("authentication required"))
@@ -298,6 +321,11 @@ func (h *MCPOAuthHandler) ResolveMCPOAuth(c *gin.Context) {
 	serviceID := strings.TrimSpace(body.ServiceID)
 	if serviceID == "" {
 		c.Error(errors.NewValidationError("service_id is required"))
+		return
+	}
+	// TeKnowra: 现在知道是哪个服务了，补上「该共享智能体确实用了这个服务」的校验
+	if _, err := h.oauthTenantFor(c, serviceID); err != nil {
+		c.Error(err)
 		return
 	}
 
@@ -387,7 +415,12 @@ func (h *MCPOAuthHandler) ResolveMCPOAuth(c *gin.Context) {
 func (h *MCPOAuthHandler) CancelMCPOAuth(c *gin.Context) {
 	ctx := c.Request.Context()
 	pendingID := c.Param("pending_id")
-	tenantID := c.GetUint64(types.TenantIDContextKey.String())
+	// TeKnowra: 共享智能体时换成源空间并校验共享关系，见 mcp_oauth_shared_agent.go
+	tenantID, tenantErr := h.oauthTenantFor(c, "")
+	if tenantErr != nil {
+		c.Error(tenantErr)
+		return
+	}
 	_, gateUserID := mcpOAuthPrincipalsFromContext(c)
 	if tenantID == 0 || strings.TrimSpace(gateUserID) == "" {
 		c.Error(errors.NewUnauthorizedError("authentication required"))
