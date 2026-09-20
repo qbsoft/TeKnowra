@@ -126,6 +126,10 @@ func (e *agentExecutor) finishMessage(
 	msg.IsCompleted = true
 	if strings.TrimSpace(msg.Content) == "" {
 		switch {
+		case runErr != nil && strings.TrimSpace(answer) != "":
+			// 两样都留：模型说了什么，以及这次为什么算失败。只留后者会丢掉模型的话，
+			// 只留前者则会话里只剩一句含糊的「我无法访问数据」，看不出该去做什么。
+			msg.Content = fmt.Sprintf("%s\n\n（本次定时执行失败：%v）", answer, runErr)
 		case runErr != nil:
 			msg.Content = fmt.Sprintf("（本次定时执行失败：%v）", runErr)
 		case strings.TrimSpace(answer) != "":
@@ -203,6 +207,42 @@ func (e *agentExecutor) runAndCollect(
 
 	eventBus := event.NewEventBus()
 
+	// 定时任务以创建人的身份、用创建人存下的令牌去调按人授权的 MCP 工具。创建人还没授权、
+	// 或令牌到期之后，这里没有任何人在场能点「去授权」。不打这个标记，工具会像交互式对话
+	// 那样挂起等人点，干等到 mcp_auth_wait_timeout（默认 600 秒）才放弃——每个没授权的
+	// 服务等一次。打上之后工具立刻发一条 EventMCPOAuthRequired 通知并继续（上游为 IM 机器人
+	// 准备的机制，见 types.WithMCPOAuthNonInteractive）。
+	ctx = types.WithMCPOAuthNonInteractive(ctx)
+
+	// 收下那条通知，用来把失败原因说清楚。按服务去重：一个服务的每个工具都会各发一次。
+	var unauthorized []string
+	seenService := map[string]bool{}
+	eventBus.On(event.EventMCPOAuthRequired, func(_ context.Context, evt event.Event) error {
+		data, ok := evt.Data.(event.MCPOAuthRequiredData)
+		if !ok {
+			ptr, okPtr := evt.Data.(*event.MCPOAuthRequiredData)
+			if !okPtr || ptr == nil {
+				return nil
+			}
+			data = *ptr
+		}
+		key := data.ServiceID
+		if key == "" {
+			key = data.ServiceName
+		}
+		name := data.ServiceName
+		if name == "" {
+			name = data.ServiceID
+		}
+		mu.Lock()
+		if !seenService[key] {
+			seenService[key] = true
+			unauthorized = append(unauthorized, name)
+		}
+		mu.Unlock()
+		return nil
+	})
+
 	// The final answer arrives in chunks; accumulate rather than keeping the
 	// last one.
 	eventBus.On(event.EventAgentFinalAnswer, func(_ context.Context, evt event.Event) error {
@@ -244,15 +284,36 @@ func (e *agentExecutor) runAndCollect(
 	mu.Lock()
 	answer := buf.String()
 	eventErr := bufErr
+	authErr := missingAuthorizationError(unauthorized)
 	mu.Unlock()
 
-	if runErr != nil {
+	// 授权原因是补充，不能盖掉运行本身的故障；两样都有就都带上。
+	switch {
+	case runErr != nil && authErr != nil:
+		return answer, fmt.Errorf("%w；另外，%v", runErr, authErr)
+	case runErr != nil:
 		return answer, runErr
-	}
-	if eventErr != "" {
+	case eventErr != "" && authErr != nil:
+		return answer, fmt.Errorf("%s；另外，%v", eventErr, authErr)
+	case eventErr != "":
 		return answer, errors.New(eventErr)
 	}
+	// 模型多半还是给了一句「我无法访问数据」，但工具没用上，这次执行不能记成成功——
+	// 否则任务看上去一直正常，其实一直没取到数。
+	if authErr != nil {
+		return answer, authErr
+	}
 	return answer, nil
+}
+
+// missingAuthorizationError 把「哪些服务没授权」写成任务创建人看得懂、知道下一步做什么的一句话。
+func missingAuthorizationError(services []string) error {
+	if len(services) == 0 {
+		return nil
+	}
+	return fmt.Errorf("任务创建人对「%s」的授权不存在或已过期（授权有有效期，到期需重新授权）。"+
+		"请创建人打开这个智能体的对话，在里面完成一次「去授权」，之后的定时执行会自动恢复",
+		strings.Join(services, "」「"))
 }
 
 // newAgentExecutor wires the agent execution mode, or reports why it cannot be
