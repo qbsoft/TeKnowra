@@ -410,6 +410,8 @@
       setContext: setContext,
       openWithQuery: openWithQuery,
       setLocale: setLocale,
+      // TeKnowra: 宿主退出登录时调用，让嵌入页删掉当前用户的访客编号和对话指针。
+      forgetIdentity: function () { return postHostPayload('forget_identity', { channel_id: channelId }); },
     };
   }
 
@@ -439,6 +441,7 @@
     setContext: function (ctx) { if (instance) instance.setContext(ctx); },
     openWithQuery: function (query) { if (instance) instance.openWithQuery(query); },
     setLocale: function (locale) { if (instance) instance.setLocale(locale); },
+    forgetIdentity: function () { return instance ? instance.forgetIdentity() : false; },
   };
 
   global.WeKnora = api;

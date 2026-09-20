@@ -1,6 +1,6 @@
 import { get, post, put, del } from '@/utils/request'
 import { resolveEmbedBaseUrl } from '@/utils/embedBaseUrl'
-import { embedHostUserSuffix, setEmbedHostUser } from './hostUser'
+import { embedHostUserSuffix, forgetEmbedIdentityOnRequest, setEmbedHostUser } from './hostUser'
 
 export interface EmbedChannel {
   id: string
@@ -738,6 +738,7 @@ export function onEmbedHostContext(handler: (payload: Record<string, unknown>) =
 /** Listen for a publish token provided by the parent host page. */
 export function onEmbedHostToken(handler: (token: string, channelId?: string) => void) {
   const listener = (e: MessageEvent) => {
+    if (forgetEmbedIdentityOnRequest(e, isTrustedParentMessage, [embedVisitorStorageKey, embedChatSessionStorageKey])) return
     if (!isTrustedParentMessage(e) || e.data.type !== 'provide_token') return
     const token = String(e.data.token || '').trim()
     if (!token) return
