@@ -64,12 +64,14 @@ export function withEmbedHostUserPlaceholder(url: string): string {
 export function readEmbedHostUserFromLocation(loc: { hash?: string; search?: string } | undefined =
   typeof location === 'undefined' ? undefined : location): string {
   if (!loc) return ''
-  const hash = (loc.hash || '').replace(/^#/, '')
-  return (
-    new URLSearchParams(hash).get('host_user') ||
-    new URLSearchParams(loc.search || '').get('host_user') ||
-    ''
-  ).trim()
+  // 平台生成的 iframe 代码里，地址里的 & 按 HTML 规矩写成 &amp;。整段贴进网页时浏览器会还原；
+  // 但有人只把地址抠出来用脚本设给 iframe 的话，参数名就成了 "amp;host_user"——读不出来、
+  // 又不报错，悄悄退回「一个浏览器算一个人」。两种写法都认。
+  const pick = (raw: string) => {
+    const params = new URLSearchParams(raw)
+    return params.get('host_user') || params.get('amp;host_user') || ''
+  }
+  return (pick((loc.hash || '').replace(/^#/, '')) || pick(loc.search || '')).trim()
 }
 
 /** 嵌入页启动时调用：iframe 方式的宿主用户在地址里。浮窗方式稍后由 provide_token 消息覆盖。 */

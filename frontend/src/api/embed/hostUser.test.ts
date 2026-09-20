@@ -69,6 +69,8 @@ test('iframe 方式：从地址里读宿主用户，# 后面优先', () => {
   assert.equal(readEmbedHostUserFromLocation({ hash: '#token=em_x' }), '')
   assert.equal(readEmbedHostUserFromLocation({ hash: '#host_user=%E5%BC%A0%E4%B8%89' }), '张三')
   assert.equal(readEmbedHostUserFromLocation(undefined), '')
+  // 有人只把生成代码里的地址抠出来用（&amp; 没被还原）：照样读得出来，不能悄悄失效
+  assert.equal(readEmbedHostUserFromLocation({ hash: '#token=em_x&amp;host_user=u-42' }), 'u-42')
 })
 
 test('生成的代码：浮窗多一行属性；iframe 地址接在 token 后面，没有 token 时自己起 #', () => {
