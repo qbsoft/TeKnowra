@@ -456,6 +456,7 @@
         channel: legacyChannel,
         token: legacyToken,
         tokenEndpoint: legacyTokenEndpoint,
+        hostUser: legacyScript.getAttribute('data-host-user'),
         scriptEl: legacyScript,
         position: legacyScript.getAttribute('data-position'),
         primaryColor: legacyScript.getAttribute('data-primary-color'),

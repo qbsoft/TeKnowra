@@ -1,6 +1,12 @@
 import { get, post, put, del } from '@/utils/request'
 import { resolveEmbedBaseUrl } from '@/utils/embedBaseUrl'
-import { embedHostUserSuffix, forgetEmbedIdentityOnRequest, setEmbedHostUser } from './hostUser'
+import {
+  embedHostUserAttr,
+  embedHostUserSuffix,
+  forgetEmbedIdentityOnRequest,
+  setEmbedHostUser,
+  withEmbedHostUserPlaceholder,
+} from './hostUser'
 
 export interface EmbedChannel {
   id: string
@@ -602,7 +608,7 @@ function safeBaseUrl(raw?: string): string {
 export function buildEmbedSnippet(channelId: string, token?: string) {
   // A bare iframe has no token-handoff host, so the snippet must carry the
   // publish token in the URL hash, otherwise the embed page cannot bootstrap.
-  const url = escapeHtmlAttr(buildEmbedURL(channelId, token))
+  const url = escapeHtmlAttr(withEmbedHostUserPlaceholder(buildEmbedURL(channelId, token)))
   return `<iframe src="${url}" style="width:400px;height:600px;border:none;border-radius:12px" allow="clipboard-write"></iframe>`
 }
 
@@ -617,6 +623,7 @@ export function buildWidgetSnippet(
     `src="${escapeHtmlAttr(`${base}/weknora-widget.js`)}"`,
     `data-channel="${escapeHtmlAttr(channelId)}"`,
     `data-token="${escapeHtmlAttr(token)}"`,
+    embedHostUserAttr(),
     `data-position="${escapeHtmlAttr(position)}"`,
   ]
   if (opts?.primaryColor) attrs.push(`data-primary-color="${escapeHtmlAttr(opts.primaryColor)}"`)
@@ -644,6 +651,7 @@ export function buildSecureWidgetSnippet(
     `src="${escapeHtmlAttr(`${base}/weknora-widget.js`)}"`,
     `data-channel="${escapeHtmlAttr(channelId)}"`,
     `data-token-endpoint="${escapeHtmlAttr(endpoint)}"`,
+    embedHostUserAttr(),
     `data-position="${escapeHtmlAttr(position)}"`,
   ]
   if (opts?.primaryColor) attrs.push(`data-primary-color="${escapeHtmlAttr(opts.primaryColor)}"`)

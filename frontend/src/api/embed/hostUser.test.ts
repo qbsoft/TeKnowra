@@ -3,7 +3,15 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-import { embedHostUserSuffix, forgetEmbedIdentityOnRequest, setEmbedHostUser } from './hostUser'
+import {
+  EMBED_HOST_USER_PLACEHOLDER,
+  embedHostUserAttr,
+  embedHostUserSuffix,
+  forgetEmbedIdentityOnRequest,
+  readEmbedHostUserFromLocation,
+  setEmbedHostUser,
+  withEmbedHostUserPlaceholder,
+} from './hostUser'
 
 const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8')
 
@@ -42,6 +50,40 @@ test('特殊字符被转义、超长被截断，拼不出别人的键', () => {
   assert.equal(embedHostUserSuffix(), ':u:a%3Au%3Ab%2F..%2Fc')
   setEmbedHostUser('x'.repeat(500))
   assert.equal(embedHostUserSuffix().length, ':u:'.length + 128)
+})
+
+// ── 平台生成的嵌入代码带上宿主用户 ─────────────────────────────────────────────
+// 场景：别的系统照着「设置 → 网页嵌入」里平台给的代码贴进去。按人分开的能力必须从这个入口就能用上。
+
+test('接入方没换占位符就贴上去：当作没传，不能让所有人落到同一个假用户名下', () => {
+  setEmbedHostUser(EMBED_HOST_USER_PLACEHOLDER)
+  assert.equal(embedHostUserSuffix(), '')
+  setEmbedHostUser(`  ${EMBED_HOST_USER_PLACEHOLDER}  `)
+  assert.equal(embedHostUserSuffix(), '')
+})
+
+test('iframe 方式：从地址里读宿主用户，# 后面优先', () => {
+  assert.equal(readEmbedHostUserFromLocation({ hash: '#token=em_x&host_user=1867392610583715841' }), '1867392610583715841')
+  assert.equal(readEmbedHostUserFromLocation({ hash: '#token=em_x', search: '?host_user=u2' }), 'u2')
+  assert.equal(readEmbedHostUserFromLocation({ hash: '#host_user=a', search: '?host_user=b' }), 'a')
+  assert.equal(readEmbedHostUserFromLocation({ hash: '#token=em_x' }), '')
+  assert.equal(readEmbedHostUserFromLocation({ hash: '#host_user=%E5%BC%A0%E4%B8%89' }), '张三')
+  assert.equal(readEmbedHostUserFromLocation(undefined), '')
+})
+
+test('生成的代码：浮窗多一行属性；iframe 地址接在 token 后面，没有 token 时自己起 #', () => {
+  assert.equal(embedHostUserAttr(), 'data-host-user="CURRENT_USER_ID"')
+  assert.equal(
+    withEmbedHostUserPlaceholder('https://t.example.com/embed/ch#token=em_x'),
+    'https://t.example.com/embed/ch#token=em_x&host_user=CURRENT_USER_ID',
+  )
+  assert.equal(
+    withEmbedHostUserPlaceholder('https://t.example.com/embed/ch'),
+    'https://t.example.com/embed/ch#host_user=CURRENT_USER_ID',
+  )
+  // 生成出来的地址，嵌入页自己要读得回来
+  const url = new URL(withEmbedHostUserPlaceholder('https://t.example.com/embed/ch#token=em_x').replace('CURRENT_USER_ID', 'u-42'))
+  assert.equal(readEmbedHostUserFromLocation({ hash: url.hash }), 'u-42')
 })
 
 // ── 退出登录时清除 ─────────────────────────────────────────────────────────
@@ -131,6 +173,18 @@ test('上游文件里的钩子都还在', () => {
 
   const widget = read('../../../public/weknora-widget.js')
   assert.match(widget, /type: 'provide_token',[\s\S]{0,120}host_user: opts\.hostUser/)
+
+  // 生成的嵌入代码带上宿主用户：三个 build*Snippet、嵌入页启动、浮窗脚本的自动初始化、设置面板里的说明
+  assert.match(api, /escapeHtmlAttr\(withEmbedHostUserPlaceholder\(buildEmbedURL\(channelId, token\)\)\)/)
+  assert.equal((api.match(/^\s+embedHostUserAttr\(\),$/gm) || []).length, 2, '浮窗和安全模式两种代码都要带这一行')
+  const bridge = read('../../composables/useEmbedBridge.ts')
+  const applyAt = bridge.indexOf('    applyEmbedHostUserFromLocation()')
+  assert.ok(
+    applyAt > 0 && applyAt < bridge.indexOf('await bootstrap(initialToken)'),
+    '必须在 bootstrap 之前读地址里的宿主用户',
+  )
+  assert.match(widget, /hostUser: legacyScript\.getAttribute\('data-host-user'\),/)
+  assert.match(read('../../components/AgentEmbedChannelPanel.vue'), /<EmbedHostUserHint :mode="drawerSnippetTab" \/>/)
 
   // 退出登录时清除：嵌入页在处理令牌消息之前先认领清除消息；小部件在实例和全局 API 上各暴露一个入口
   assert.match(api, /if \(forgetEmbedIdentityOnRequest\(e, isTrustedParentMessage, \[embedVisitorStorageKey, embedChatSessionStorageKey\]\)\) return/)

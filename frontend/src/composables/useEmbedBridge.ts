@@ -1,6 +1,7 @@
 import { onMounted, onUnmounted, ref, type Ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { handleEmbedOAuthLanding } from '@/api/embed/oauthLanding'
+import { applyEmbedHostUserFromLocation } from '@/api/embed/hostUser'
 import { useI18n } from 'vue-i18n'
 import {
   createEmbedSession,
@@ -229,6 +230,7 @@ export function useEmbedBridge(channelId: Ref<string>) {
       return
     }
 
+    applyEmbedHostUserFromLocation()
     const initialToken = String(route.query.token || '') || parseEmbedTokenFromLocation()
     if (initialToken) {
       await bootstrap(initialToken)

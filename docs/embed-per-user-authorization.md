@@ -38,6 +38,21 @@
 
 后端不改：令牌仍按上游的 `embed_visitor:<tenant>:<channel>:<visitorId>` 存取。
 
+### 一点五、平台生成的嵌入代码也要带上这个参数（2026-09-21 补）
+
+「设置 → 网页嵌入 → 复制嵌入代码」替接入方生成三种代码。按人分开的能力原先只接在编程方式的
+`WeKnora.init({ hostUser })` 上，生成的代码里没有、界面上也没提——照平台给的代码贴进去的宿主根本
+用不上，而「宿主只贴一段代码」正是这件事的硬约束。三种形式各补一个入口：
+
+| 形式 | 入口 |
+|---|---|
+| 浮窗、安全模式 | `<script … data-host-user="CURRENT_USER_ID">`，浮窗脚本的自动初始化读它 |
+| iframe | 地址末尾 `#token=…&host_user=CURRENT_USER_ID`（与 token 一样放在 # 后面，不发给服务器），嵌入页启动时读它 |
+| 单页应用 | 换人时页面不刷新、写死的属性跟不上，用编程方式 `WeKnora.init({ …, hostUser })`，用户变化后重新调用 |
+
+占位符 `CURRENT_USER_ID` 原样留着等同于没填（否则所有人会落到同一个假用户名下）。代码框下面有一段
+说明（`components/teknowra/EmbedHostUserHint.vue`）。要用不会变的 ID，不要用姓名、邮箱。
+
 ### 二、宿主传入当前用户（CRM 前端）
 
 `crm-ui/src/utils/teknowraWidget.ts` 加载小部件时带上当前登录人。为此从「script 标签 data-* 自动初始化」

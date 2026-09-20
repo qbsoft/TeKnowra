@@ -195,6 +195,11 @@ localhost / 127.0.0.1）授权就被对方拒掉，用户看到一屏 JSON（`Re
   `setEmbedHostUser(e.data.host_user)`（顺序要紧：bootstrap 一进去就读访客编号）。
 - `frontend/public/weknora-widget.js`：`provide_token` 消息带上 `host_user`。
 
+平台生成的三种嵌入代码也带上了这个参数（2026-09-21）：`api/embed/index.ts` 三个 `build*Snippet` 各一行
+（`embedHostUserAttr()` / `withEmbedHostUserPlaceholder()`）；`useEmbedBridge.ts` 的 `start()` 里一行
+`applyEmbedHostUserFromLocation()`（iframe 方式从地址读）；`weknora-widget.js` 自动初始化读 `data-host-user` 一行；
+`AgentEmbedChannelPanel.vue` 代码框下面挂一行我们自己的说明组件 `components/teknowra/EmbedHostUserHint.vue`。
+
 顺带：授权弹窗走完后落在不带 token 的嵌入页地址上，上游显示「缺少嵌入渠道或 Token」，像报错。
 `frontend/src/api/embed/oauthLanding.ts` 认出这种落脚并改成「授权成功，可以关闭此窗口」；
 钩子是 `composables/useEmbedBridge.ts` 的 `start()` 开头一行。

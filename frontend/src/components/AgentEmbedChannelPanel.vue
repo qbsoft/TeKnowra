@@ -327,6 +327,7 @@
               </div>
               <pre class="code-panel__pre">{{ drawerSnippet }}</pre>
             </div>
+            <EmbedHostUserHint :mode="drawerSnippetTab" />
 
             <template v-if="drawerSnippetTab === 'secure'">
               <p class="snippet-scenario">{{ $t('embedPublish.secureServerLabel') }}</p>
@@ -401,6 +402,7 @@ import { copyWithToast } from '@/utils/clipboard'
 import { useAuthStore } from '@/stores/auth'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import EmbedChannelPreview from '@/components/EmbedChannelPreview.vue'
+import EmbedHostUserHint from '@/components/teknowra/EmbedHostUserHint.vue'
 import {
   listAllEmbedChannels,
   createEmbedChannel,
