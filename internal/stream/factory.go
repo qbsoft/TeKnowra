@@ -26,14 +26,15 @@ func NewStreamManager() (interfaces.StreamManager, error) {
 		// streaming (AppendEvent / GetEvents / steer writes), so a run that
 		// lasts longer than this TTL does not look idle to /steer.
 		ttl := time.Hour
-		return NewRedisStreamManager(
+		// TeKnowra: 建好后清一次上个进程留下的 live-run 标记，见 liverun_sweep_teknowra.go。
+		return withStartupSweep(NewRedisStreamManager(
 			os.Getenv("REDIS_ADDR"),
 			os.Getenv("REDIS_USERNAME"),
 			os.Getenv("REDIS_PASSWORD"),
 			db,
 			os.Getenv("REDIS_PREFIX"),
 			ttl,
-		)
+		))
 	default:
 		return NewMemoryStreamManager(), nil
 	}

@@ -157,6 +157,18 @@ A 空间把挂了按人授权 MCP 服务的智能体共享给 B 空间的用户�
 合并上游后那几行若被冲掉，`mcp_oauth_shared_agent_test.go` 的
 `TestMCPOAuthEndpointsUseSharedAgentTenant` 会红；`TestOAuthTenantFor` 覆盖全部放行/拒绝分支。
 
+### 启动时清掉上一个进程留下的「会话正在运行」标记（2026-09-20）
+
+每轮对话开始时在 Redis 写一个 `<prefix>:<sessionID>:live-run` 标记，结束时在这一轮自己的 defer 里清。
+进程退出时还没结束的那一轮（典型：停在「等待授权」，最长 10 分钟）来不及清；标记有效期 1 小时且每次读取
+都续期，于是该会话此后一直 409 `another turn is already running in this session`，用户只能新建对话。
+每晚自动更新、白天手动部署都会撞上。
+
+我们是单实例部署：进程刚启动时不可能有对话在跑，启动那一刻的残留标记全是上个进程的，直接清掉。
+逻辑在我们自己的 `internal/stream/liverun_sweep_teknowra.go`；上游文件 `internal/stream/factory.go` 里
+一行钩子（`withStartupSweep(NewRedisStreamManager(...))`），同目录测试盯着。
+**改成多实例部署时必须设 `TEKNOWRA_SWEEP_LIVE_RUNS=false`**，否则会清掉别的实例上正在跑的对话的标记。
+
 ### MCP 授权的回跳地址只认一个，由服务端决定（2026-09-20）
 
 平台对每个 MCP 服务只向对方登记一次，回跳地址随登记一起交过去；而网页发起授权时回跳地址是前端用
