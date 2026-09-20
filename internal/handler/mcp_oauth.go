@@ -111,6 +111,8 @@ func (h *MCPOAuthHandler) AuthorizeURL(c *gin.Context) {
 		return
 	}
 
+	// TeKnowra: 回跳地址由服务端说了算（已登记的那个），见 mcp/oauth_canonical_redirect.go。
+	req.RedirectURI = h.oauth.CanonicalRedirectURI(ctx, tenantID, service.ID, req.RedirectURI)
 	authURL, attemptID, err := h.oauth.StartAuthorization(
 		ctx, service, tenantID, principal, req.RedirectURI, req.FrontendRedirect,
 	)

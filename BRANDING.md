@@ -157,6 +157,18 @@ A 空间把挂了按人授权 MCP 服务的智能体共享给 B 空间的用户�
 合并上游后那几行若被冲掉，`mcp_oauth_shared_agent_test.go` 的
 `TestMCPOAuthEndpointsUseSharedAgentTenant` 会红；`TestOAuthTenantFor` 覆盖全部放行/拒绝分支。
 
+### MCP 授权的回跳地址只认一个，由服务端决定（2026-09-20）
+
+平台对每个 MCP 服务只向对方登记一次，回跳地址随登记一起交过去；而网页发起授权时回跳地址是前端用
+`window.location.origin` 拼的——用户这次从哪个地址进平台就是哪个。换个地址进来（域名 / 内网 IP /
+localhost / 127.0.0.1）授权就被对方拒掉，用户看到一屏 JSON（`Redirect URI ... not registered for client`
+或 `does not match allowed patterns`）。
+
+改成服务端说了算：已登记过就用登记时的地址；没登记过且配了 `APP_EXTERNAL_URL` 就用它拼（与 IM 机器人
+生成授权链接同一口径）；都没有才用前端报的。逻辑在我们自己的 `internal/mcp/oauth_canonical_redirect.go`，
+上游文件 `internal/handler/mcp_oauth.go` 的 `AuthorizeURL` 里一行钩子（网页和嵌入页都走这个函数）。
+被冲掉的话 `internal/handler/mcp_oauth_canonical_redirect_test.go` 会红。
+
 ### 嵌入页按宿主用户分开存授权和对话（2026-09-19）
 
 设计与取舍见 `docs/embed-per-user-authorization.md`。嵌入页在浏览器里按「渠道」存访客编号
