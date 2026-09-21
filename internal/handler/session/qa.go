@@ -556,6 +556,8 @@ func (h *Handler) resolveAgent(
 	if agentID == "" {
 		return nil, 0, false
 	}
+	// TeKnowra: 来源空间就是自己的空间时不算共享，见 agent_own_source_teknowra.go。
+	sourceTenantID = ownTenantIsNotAShareSource(c, sourceTenantID)
 
 	logger.Infof(ctx, "Resolving agent, agent ID: %s", secutils.SanitizeForLog(agentID))
 

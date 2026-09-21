@@ -157,6 +157,17 @@ A 空间把挂了按人授权 MCP 服务的智能体共享给 B 空间的用户�
 合并上游后那几行若被冲掉，`mcp_oauth_shared_agent_test.go` 的
 `TestMCPOAuthEndpointsUseSharedAgentTenant` 会红；`TestOAuthTenantFor` 覆盖全部放行/拒绝分支。
 
+### 「来源空间就是自己的空间」不算共享（2026-09-21）
+
+`agent_source_tenant_id` 表示「这是别的空间共享给我的智能体」。上游只要它不为 0 就只按共享关系查、查不到就 404
+且不回退。空间所有者从「共享空间」页面点开自己共享出去的智能体「在对话中使用」时，前端记下的来源空间就是他
+自己的空间，并持久化在浏览器里——此后每次提问都是 404「流式连接失败」。线上 admin 撞上，本机浏览器里存的是空值
+所以测不出来。
+
+两头都归一：后端 `internal/handler/session/agent_own_source_teknowra.go`，钩子在上游 `qa.go` 的 `resolveAgent`
+开头一行；前端 `frontend/src/stores/agentOwnSource.ts`，钩子在上游 `stores/settings.ts` 的 getter 和 `selectAgent`
+各一处（读取时归一，浏览器里已存的旧值也救得回来）。各有测试盯着钩子。来源是别的空间时一字不改。
+
 ### 启动时清掉上一个进程留下的「会话正在运行」标记（2026-09-20）
 
 每轮对话开始时在 Redis 写一个 `<prefix>:<sessionID>:live-run` 标记，结束时在这一轮自己的 defer 里清。

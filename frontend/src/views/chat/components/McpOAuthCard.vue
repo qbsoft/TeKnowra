@@ -173,7 +173,7 @@ const skip = async () => {
 // 后端据此换空间并校验共享关系。用自己空间的智能体时为 undefined，行为与原来一致。
 const settingsStore = useSettingsStore()
 const sharedAgentScope = computed(() => {
-  const sourceTenantId = settingsStore.settings.selectedAgentSourceTenantId
+  const sourceTenantId = settingsStore.selectedAgentSourceTenantId
   const agentId = settingsStore.settings.selectedAgentId
   return sourceTenantId && agentId ? { agentId, sourceTenantId: String(sourceTenantId) } : undefined
 })

@@ -4,6 +4,7 @@ import { BUILTIN_QUICK_ANSWER_ID, BUILTIN_SMART_REASONING_ID } from "@/api/agent
 import { getApiBaseUrl } from "@/utils/api-base";
 import { isAgentStreamAgentId } from "@/utils/agent-mode";
 import { loadAndReconcileSettings } from "@/stores/settingsStorage";
+import { currentTenantIdFromStorage, normalizeAgentSourceTenant } from "@/stores/agentOwnSource";
 
 // 定义设置接口
 interface Settings {
@@ -176,7 +177,9 @@ export const useSettingsStore = defineStore("settings", {
     // 当前选中的智能体ID
     selectedAgentId: (state) => state.settings.selectedAgentId || BUILTIN_QUICK_ANSWER_ID,
     // 共享智能体来源空间 ID（可选）
-    selectedAgentSourceTenantId: (state) => state.settings.selectedAgentSourceTenantId ?? null,
+    // TeKnowra: 来源空间就是自己的空间时不算共享（见 stores/agentOwnSource.ts）；读取时归一，浏览器里存下的旧值也救得回来。
+    selectedAgentSourceTenantId: (state) =>
+      normalizeAgentSourceTenant(state.settings.selectedAgentSourceTenantId, currentTenantIdFromStorage()),
   },
 
   actions: {
@@ -457,7 +460,7 @@ export const useSettingsStore = defineStore("settings", {
     // 选择智能体（sourceTenantId 仅在使用共享智能体时传入）
     selectAgent(agentId: string, sourceTenantId?: string | null) {
       this.settings.selectedAgentId = agentId;
-      this.settings.selectedAgentSourceTenantId = (sourceTenantId != null && sourceTenantId !== "") ? sourceTenantId : null;
+      this.settings.selectedAgentSourceTenantId = normalizeAgentSourceTenant(sourceTenantId, currentTenantIdFromStorage());
       // 智能体配置只决定是否具备网络搜索能力，不替用户决定是否在本轮使用。
       // 每次选择智能体都默认关闭，之后只能由用户从输入框主动开启。
       this.settings.webSearchEnabled = false;
