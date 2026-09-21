@@ -35,6 +35,8 @@ type CustomAgentHandler struct {
 	// sandboxConfigs validates an agent's sandbox backend selection. Optional —
 	// nil in partially-wired unit tests, where the selection is left unchecked.
 	sandboxConfigs sandboxConfigLookup
+	// agentShare 只用于共享智能体的推荐问题，见 custom_agent_shared_suggestions.go（TeKnowra）
+	agentShare interfaces.AgentShareService
 }
 
 // NewCustomAgentHandler creates a new custom agent handler instance
@@ -44,6 +46,7 @@ func NewCustomAgentHandler(
 	disabledRepo interfaces.TenantDisabledSharedAgentRepository,
 	userService interfaces.UserService,
 	sandboxConfigs *service.TenantSandboxConfigService,
+	agentShare interfaces.AgentShareService,
 ) *CustomAgentHandler {
 	return &CustomAgentHandler{
 		service:        service,
@@ -51,6 +54,7 @@ func NewCustomAgentHandler(
 		disabledRepo:   disabledRepo,
 		userService:    userService,
 		sandboxConfigs: sandboxConfigs,
+		agentShare:     agentShare,
 	}
 }
 
@@ -641,6 +645,12 @@ func (h *CustomAgentHandler) GetSuggestedQuestions(c *gin.Context) {
 	logger.Infof(ctx, "Getting suggested questions for agent %s, kbIDs: %v, tagScopes: %d, limit: %d",
 		secutils.SanitizeForLog(id), kbIDs, len(tagScopes), limit)
 
+	// TeKnowra: 共享智能体换到来源空间取推荐问题，见 custom_agent_shared_suggestions.go。
+	ctx, kbIDs, knowledgeIDs, tagScopes, scopeErr := h.sharedAgentSuggestionScope(c, ctx, id, kbIDs, knowledgeIDs, tagScopes)
+	if scopeErr != nil {
+		c.Error(scopeErr)
+		return
+	}
 	questions, err := h.service.GetSuggestedQuestions(ctx, id, kbIDs, knowledgeIDs, tagScopes, limit)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{

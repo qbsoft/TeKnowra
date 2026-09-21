@@ -380,6 +380,8 @@ export function getSuggestedQuestions(
     knowledge_ids?: string[];
     tag_scopes?: Array<{ knowledge_base_id: string; tag_ids: string[] }>;
     limit?: number;
+    // TeKnowra: 共享智能体的来源空间，后端据此换到来源空间取推荐问题（见 handler/custom_agent_shared_suggestions.go）
+    agent_source_tenant_id?: string | null;
   }
 ) {
   const query = new URLSearchParams();
@@ -387,6 +389,7 @@ export function getSuggestedQuestions(
   if (params?.knowledge_ids?.length) query.set('knowledge_ids', params.knowledge_ids.join(','));
   if (params?.tag_scopes?.length) query.set('tag_scopes', JSON.stringify(params.tag_scopes));
   if (params?.limit) query.set('limit', String(params.limit));
+  if (params?.agent_source_tenant_id) query.set('agent_source_tenant_id', params.agent_source_tenant_id);
   const qs = query.toString();
   return get<{ data: { questions: SuggestedQuestion[] } }>(`/api/v1/agents/${agentId}/suggested-questions${qs ? '?' + qs : ''}`);
 }

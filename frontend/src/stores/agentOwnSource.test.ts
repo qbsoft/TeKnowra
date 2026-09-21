@@ -29,3 +29,11 @@ test('settings store 的读取和写入两处都做了归一', () => {
   assert.match(src, /selectedAgentSourceTenantId: \(state\) =>\s*normalizeAgentSourceTenant\(state\.settings\.selectedAgentSourceTenantId, currentTenantIdFromStorage\(\)\)/)
   assert.match(src, /this\.settings\.selectedAgentSourceTenantId = normalizeAgentSourceTenant\(sourceTenantId, currentTenantIdFromStorage\(\)\)/)
 })
+
+// 共享智能体的开场推荐问题：取推荐问题的参数里要带上来源空间，接口要把它放进查询串。被冲掉的话 sales01 又看不到开场问题。
+test('推荐问题的参数和接口都带上了来源空间', () => {
+  const store = readFileSync(fileURLToPath(new URL('./settings.ts', import.meta.url)), 'utf8')
+  assert.match(store, /agent_source_tenant_id: this\.selectedAgentSourceTenantId,/)
+  const api = readFileSync(fileURLToPath(new URL('../api/agent/index.ts', import.meta.url)), 'utf8')
+  assert.match(api, /query\.set\('agent_source_tenant_id', params\.agent_source_tenant_id\)/)
+})

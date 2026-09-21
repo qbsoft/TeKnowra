@@ -454,6 +454,8 @@ export const useSettingsStore = defineStore("settings", {
         knowledge_ids: selectedFiles.length > 0 ? selectedFiles : undefined,
         tag_scopes: tagScopes.length > 0 ? tagScopes : undefined,
         limit,
+        // TeKnowra: 共享智能体要带上来源空间，否则后端在自己空间里找不到它（getter 已把「来源=自己」归一成 null）
+        agent_source_tenant_id: this.selectedAgentSourceTenantId,
       };
     },
     

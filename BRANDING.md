@@ -157,6 +157,18 @@ A 空间把挂了按人授权 MCP 服务的智能体共享给 B 空间的用户�
 合并上游后那几行若被冲掉，`mcp_oauth_shared_agent_test.go` 的
 `TestMCPOAuthEndpointsUseSharedAgentTenant` 会红；`TestOAuthTenantFor` 覆盖全部放行/拒绝分支。
 
+### 共享智能体的开场推荐问题（2026-09-21）
+
+取推荐问题的接口（`GET /agents/:id/suggested-questions`）只在调用者自己的空间里找智能体，别的空间共享过来的
+智能体每次都是 "agent not found"，开场问题永远不显示（线上 sales01 打开共享的「经营问数」时日志里反复出现）。
+改成与对话接口一致：接受 `agent_source_tenant_id`，先用 `GetSharedAgentForTenant` 校验确实共享给了调用者的空间，
+通过后切到来源空间读取，并丢掉调用者自带的知识库/文档/标签范围（只按智能体自己配置的范围取，防止拿共享智能体
+当钥匙读来源空间任意知识库的 FAQ）。
+
+后端逻辑在我们自己的 `internal/handler/custom_agent_shared_suggestions.go`；上游 `custom_agent.go` 里加了一个字段、
+构造函数一个参数（容器按类型自动注入）和调用前一行钩子。前端：`api/agent/index.ts` 的 `getSuggestedQuestions`
+和 `stores/settings.ts` 的 `getSuggestedQuestionsParams` 各一行。两边都有测试盯着。
+
 ### 「来源空间就是自己的空间」不算共享（2026-09-21）
 
 `agent_source_tenant_id` 表示「这是别的空间共享给我的智能体」。上游只要它不为 0 就只按共享关系查、查不到就 404
