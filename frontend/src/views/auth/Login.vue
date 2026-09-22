@@ -347,6 +347,7 @@ import {
   registerByInvite,
   type InviteLookup,
 } from '@/api/auth'
+import { logoutIdentityProviderBeforeLogin } from '@/api/auth/idpFreshLogin'
 import { useAuthStore } from '@/stores/auth'
 import { useI18n } from 'vue-i18n'
 
@@ -625,6 +626,7 @@ const handleOIDCLogin = async () => {
     if (inviteToken.value) {
       sessionStorage.setItem('weknora_pending_invite_token', inviteToken.value)
     }
+    await logoutIdentityProviderBeforeLogin(authorizationURL)
     window.location.href = authorizationURL
   } catch (error: any) {
     console.error('OIDC 登录跳转失败:', error)

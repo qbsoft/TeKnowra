@@ -204,6 +204,16 @@ localhost / 127.0.0.1）授权就被对方拒掉，用户看到一屏 JSON（`Re
 上游文件 `internal/handler/mcp_oauth.go` 的 `AuthorizeURL` 里一行钩子（网页和嵌入页都走这个函数）。
 被冲掉的话 `internal/handler/mcp_oauth_canonical_redirect_test.go` 会红。
 
+### 统一账号登录前先让身份中心退出（2026-09-22）
+
+身份中心（Casdoor）记得上一个人时，登录页是「使用以下账号继续：xxx」点一下就过——同一台电脑换人，
+后来的人就以前一个人的身份登进 TeKnowra；Casdoor 又不支持 `prompt=login`。所以登录页点「统一账号登录」
+后、跳转前，先请求一次标准发现文档里的 `end_session_endpoint`（按授权地址的源去找，不写死任何一家的路径；
+找不到或失败就跳过，退回上游原行为）。与 MCP 统一账号授权同一办法，线上已实测跨子域名有效。
+逻辑在我们自己的 `frontend/src/api/auth/idpFreshLogin.ts`；上游 `views/auth/Login.vue` 里一行 import、
+`handleOIDCLogin` 里 `window.location.href = authorizationURL` 前一行调用。被冲掉的话
+`idpFreshLogin.test.ts` 会红。外部平台直链 `/auth/oidc/start`（后端 302）不经过登录页，不受影响。
+
 ### 嵌入页按宿主用户分开存授权和对话（2026-09-19）
 
 设计与取舍见 `docs/embed-per-user-authorization.md`。嵌入页在浏览器里按「渠道」存访客编号
