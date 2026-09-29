@@ -641,10 +641,8 @@ async function startAuthorize(serviceId: string) {
   oauthAuthorizing.value = true
   try {
     const redirectUri = window.location.origin + MCP_OAUTH_CALLBACK_PATH
-    // After the backend completes the exchange it bounces the popup here. The
-    // app root is harmless; the popup is closed by the opener below once the
-    // authorization status flips, so this page is only shown briefly.
-    const frontendRedirect = window.location.origin + '/'
+    // 站点根路径 `/` 会被路由转到知识库列表。授权完成后回到用户当时所在的设置页。
+    const frontendRedirect = window.location.origin + window.location.pathname + window.location.search
     const authorization = await getMCPOAuthAuthorizeURL(serviceId, {
       redirect_uri: redirectUri,
       frontend_redirect: frontendRedirect,

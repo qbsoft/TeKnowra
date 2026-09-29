@@ -183,9 +183,8 @@ const authorize = async () => {
   authorizing.value = true
   try {
     const redirectUri = window.location.origin + MCP_OAUTH_CALLBACK_PATH
-    const frontendRedirect = useEmbedOAuth()
-      ? window.location.origin + window.location.pathname + window.location.search
-      : window.location.origin + '/'
+    // 站点根路径 `/` 会被路由转到知识库列表。授权窗口必须回到用户点「去授权」时所在的页面。
+    const frontendRedirect = window.location.origin + window.location.pathname + window.location.search
     const authorization = useEmbedOAuth()
       ? await getEmbedMCPOAuthAuthorizeURL(
         props.embedChannelId!,
