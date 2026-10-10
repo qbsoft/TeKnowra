@@ -19,7 +19,7 @@ function fixture() {
   const errors: unknown[][] = []
   const ui = vue.reactive({ showSettingsModal: false })
   const resources = {
-    agentTypePresets: [], promptTemplates: null, storageStatus: [], skillCatalog: [],
+    agentTypePresets: [], promptTemplates: null, storageStatus: [], skillCatalog: [], skills: [],
     parserEngines: [
       { Name: 'builtin', Available: true, FileTypes: ['pdf', 'xlsx'] },
       { Name: 'anydoc', Available: true, FileTypes: ['pdf', 'xlsx'] },
@@ -53,6 +53,7 @@ function fixture() {
     '@/api/agent': { listIMChannels: async () => ({ data: [] }) },
     '@/api/embed': { listEmbedChannels: async () => ({ data: [] }) },
     '@/api/skill': {},
+    '@/api/mcp-service': { listMCPAgentTools: async () => ({ data: [] }) },
     '@/api/system': { isNamedSandboxBackend: () => true },
     '@/utils/clipboard': { copyWithToast() {} },
   }
@@ -74,6 +75,7 @@ function fixture() {
     })
     return exports
   }
+  modules['./agentToolRequirements'] = evaluate(readFileSync(new URL('../views/agent/agentToolRequirements.ts', import.meta.url), 'utf8'))
   modules['@/composables/useModalShell'] = evaluate(readFileSync(new URL('./useModalShell.ts', import.meta.url), 'utf8'))
   function mount(path: string, props: Record<string, any>) {
     const { descriptor } = parse(readFileSync(new URL(path, import.meta.url), 'utf8'))

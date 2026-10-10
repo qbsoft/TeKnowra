@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import vm from 'node:vm'
+import ts from 'typescript'
 import { computed, reactive } from 'vue'
 import { isAssistantTurnComplete } from '../../../utils/steerStreamFork.ts'
 
@@ -18,8 +19,8 @@ test('steer seals animation while keeping the preceding timeline open without co
   const stateBlock = source.slice(source.indexOf('const isConversationDone ='), source.indexOf('const streamingMermaidSvgCache ='))
   const collapseBlock = source.slice(source.indexOf('const shouldShowCollapsedSteps ='), source.indexOf('// Once the steps collapse'))
   const props = reactive({ ragMode: false, session: { steerForked: true, is_completed: true } })
-  const state = vm.runInNewContext(`${stateBlock}\n${collapseBlock}\n({ isConversationDone, isSegmentDone, shouldShowCollapsedSteps })`, {
-    props, computed, isAssistantTurnComplete, intermediateStepsCount: { value: 2 },
+  const state = vm.runInNewContext(ts.transpile(`${stateBlock}\n${collapseBlock}\n({ isConversationDone, isSegmentDone, shouldShowCollapsedSteps })`), {
+    props, computed, isAssistantTurnComplete, intermediateStepsCount: { value: 2 }, eventStream: { value: [] },
   })
   assert.equal(state.isSegmentDone.value, true)
   assert.equal(state.isConversationDone.value, false)

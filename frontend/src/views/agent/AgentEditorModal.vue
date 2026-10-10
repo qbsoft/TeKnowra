@@ -5781,7 +5781,7 @@ const handleSave = async () => {
 
 .content-wrapper::-webkit-scrollbar-thumb {
   background: var(--td-gray-color-5);
-  border-radius: 3px;
+  border-radius: var(--app-radius-xs);
 }
 
 .content-wrapper::-webkit-scrollbar-thumb:hover {
@@ -6418,11 +6418,11 @@ const handleSave = async () => {
   gap: 4px;
   margin-top: 6px;
   padding: 2px 8px;
-  font-size: 12px;
+  font-size: var(--app-text-xs);
   line-height: 1.5;
   color: var(--td-warning-color);
   background: var(--td-warning-color-light);
-  border-radius: 3px;
+  border-radius: var(--app-radius-xs);
 }
 
 .skills-missing-summary {
@@ -6430,26 +6430,18 @@ const handleSave = async () => {
   align-items: flex-start;
   gap: 8px;
   padding: 10px 12px;
-  font-size: 12px;
+  font-size: var(--app-text-xs);
   line-height: 1.6;
   color: var(--td-warning-color);
   background: var(--td-warning-color-light);
-  border-radius: 6px;
+  border-radius: var(--app-radius-sm);
 }
 
 .skills-missing-summary p {
   margin: 0;
 }
 
-.skill-info-box {
-  display: flex;
-  gap: 12px;
-  padding: 16px;
-  background: var(--td-brand-color-light);
-  border-radius: 8px;
-  border: 1px solid var(--td-brand-color-focus);
-  margin-top: 16px;
-}
+
 
 .hint-trigger {
   display: inline-flex;
@@ -6612,7 +6604,7 @@ const handleSave = async () => {
     display: inline-flex;
     align-items: center;
     padding: 1px 5px;
-    border-radius: 3px;
+    border-radius: var(--app-radius-xs);
     font-family: var(--app-font-family-mono);
     font-size: var(--app-text-xs);
     color: var(--td-text-color-primary);
@@ -6669,7 +6661,7 @@ const handleSave = async () => {
     code {
       background: var(--td-bg-color-container-hover);
       padding: 2px 5px;
-      border-radius: 3px;
+      border-radius: var(--app-radius-xs);
       font-family: var(--app-font-family-mono);
       font-size: var(--app-text-xs);
       color: var(--td-brand-color);
@@ -6851,7 +6843,7 @@ const handleSave = async () => {
   font-size: var(--app-text-2xs);
   font-weight: 500;
   padding: 0 5px;
-  border-radius: 3px;
+  border-radius: var(--app-radius-xs);
   line-height: 18px;
 }
 
@@ -6876,7 +6868,7 @@ const handleSave = async () => {
   .t-select-option {
     height: auto !important;
     padding: 6px 10px;
-    border-radius: 6px;
+    border-radius: var(--app-radius-sm);
     margin: 2px 0;
     white-space: normal;
   }

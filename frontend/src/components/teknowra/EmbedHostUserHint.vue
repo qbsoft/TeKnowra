@@ -60,7 +60,7 @@ const text = computed(() => (String(locale.value || '').toLowerCase().startsWith
   border: 1px solid var(--td-component-stroke);
   border-radius: 8px;
   background: var(--td-bg-color-container-hover);
-  font-size: 13px;
+  font-size: var(--app-text-sm);
   line-height: 1.7;
   color: var(--td-text-color-secondary);
 }
@@ -75,7 +75,7 @@ const text = computed(() => (String(locale.value || '').toLowerCase().startsWith
   padding: 1px 5px;
   border-radius: 4px;
   background: var(--td-bg-color-component);
-  font-size: 12px;
+  font-size: var(--app-text-xs);
   word-break: break-all;
 }
 .host-user-hint__pre {
@@ -83,7 +83,7 @@ const text = computed(() => (String(locale.value || '').toLowerCase().startsWith
   padding: 8px 10px;
   border-radius: 6px;
   background: var(--td-bg-color-component);
-  font-size: 12px;
+  font-size: var(--app-text-xs);
   white-space: pre-wrap;
   word-break: break-all;
 }

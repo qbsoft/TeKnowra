@@ -873,6 +873,7 @@ export default {
         ingest: '写入（谨慎开启）',
       },
       tools: {
+
         list_knowledge_bases: '列出知识库',
         list_knowledge_basesDesc: '返回端点范围内的知识库及其支持的检索方式',
         search_knowledge: '语义搜索',
@@ -1495,6 +1496,8 @@ export default {
       description: '将智能体嵌入到您的网页，访客可通过页面内聊天窗口或右下角浮窗发起对话，知识库范围跟随本智能体配置。'
     },
     tools: {
+      mcpNameDegraded: "工具名称无法完整显示，请检查服务连接。",
+
       thinking: '思考',
       thinkingDesc: '动态和反思性的问题解决思考工具',
       todoWrite: '制定计划',

@@ -66,6 +66,7 @@ for (const state of [{ agent_enabled: true, knowledge_base_ids: [] }, emptySelec
     assert.deepEqual(store.settings.selectedSkills, [])
     assert.deepEqual(store.getSuggestedQuestionsParams(), {
       knowledge_base_ids: undefined, knowledge_ids: undefined, tag_scopes: undefined, limit: undefined,
+      agent_source_tenant_id: null,
     })
     assert.equal(items.get('WeKnora_settings'), storedDefaults, 'hydration must not overwrite browser defaults')
     store.restoreDefaultsIfSnapshotted()

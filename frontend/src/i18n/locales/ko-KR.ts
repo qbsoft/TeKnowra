@@ -873,6 +873,7 @@ export default {
         ingest: '쓰기 (신중하게 활성화)',
       },
       tools: {
+
         list_knowledge_bases: '지식 베이스 목록',
         list_knowledge_basesDesc: '범위 내 지식 베이스와 지원하는 검색 방식을 반환합니다',
         search_knowledge: '의미 검색',
@@ -1493,6 +1494,8 @@ export default {
       description: '에이전트를 웹 페이지에 임베드하여 방문자가 페이지 내 채팅창 또는 플로팅 버튼으로 대화할 수 있게 합니다. 지식베이스 범위는 이 에이전트 설정을 따릅니다.'
     },
     tools: {
+      mcpNameDegraded: "Some tool names are unavailable; check the service connection.",
+
       thinking: '사고',
       thinkingDesc: '동적이고 반성적인 문제 해결 사고 도구',
       todoWrite: '계획 수립',

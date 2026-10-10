@@ -1315,6 +1315,10 @@ export default {
       enabled: 'エージェントを有効化しました'
     },
     editor: {
+      skillMissingTools: "必要なツールがありません：{tools}。",
+      skillMissingToolsNamed: "スキル「{skill}」に必要なツールがありません：{tools}。",
+      skillToolsUncheckable: "一部の MCP サービスのツール一覧を取得できず、必要なツールを確認できません。",
+
       reasoningEffortUnsupported: '選択中のモデルは思考に対応していません。「オフ」以外は無視されます。',
       reasoningEffortAlwaysOn: '選択中のモデルは常に思考します。オフにはできず、強度のみ調整できます。',
       createTitle: 'エージェントを作成',
@@ -6531,6 +6535,12 @@ export default {
       fallbackPrompt: 'ナレッジベースで回答が見つからない場合に、モデルの応答を導くプロンプト'
     },
     tools: {
+      mcpNameDegraded: "Some tool names are unavailable; check the service connection.",
+
+
+      mcpLoadFailed: "ツール一覧を取得できません：{message}",
+      mcpLoading: "ツールを読み込み中…",
+
       thinking: '思考',
       thinkingDesc: '動的かつ内省的に問題を解決する思考ツール',
       todoWrite: '計画',

@@ -873,6 +873,7 @@ export default {
         ingest: '寫入（謹慎開啟）',
       },
       tools: {
+
         list_knowledge_bases: '列出知識庫',
         list_knowledge_basesDesc: '返回端點範圍內的知識庫及其支持的檢索方式',
         search_knowledge: '語義搜尋',
@@ -1495,6 +1496,10 @@ export default {
       description: '將智慧代理內嵌到您的網頁，訪客可透過頁面內聊天視窗或右下角浮窗發起對話，知識庫範圍跟隨本智慧代理設定。'
     },
     tools: {
+      mcpNameDegraded: "工具名稱無法完整顯示，請檢查服務連線。",
+      mcpLoadFailed: "工具清單載入失敗：{message}",
+      mcpLoading: "正在載入此服務的工具…",
+
       thinking: '思考',
       thinkingDesc: '動態和反思性的問題解決思考工具',
       todoWrite: '制定計劃',
@@ -6684,6 +6689,10 @@ export default {
       capabilityUnconfigured: '未設定'
     },
     editor: {
+      skillMissingTools: "缺少工具：{tools}。請先補齊工具再使用此技能。",
+      skillMissingToolsNamed: "技能「{skill}」缺少工具：{tools}。",
+      skillToolsUncheckable: "部分 MCP 服務未返回工具清單，目前無法檢查技能所需工具。",
+
       reasoningEffortUnsupported: '當前所選模型不支持思考，除「關閉」外的選項將被忽略。',
       reasoningEffortAlwaysOn: '當前所選模型始終開啟思考，無法關閉，只能調整思考強度。',
       createTitle: '建立智慧代理',

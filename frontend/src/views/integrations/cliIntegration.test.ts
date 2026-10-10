@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { spawnSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { buildCLIConnectCommand } from './cliIntegration'
 
 test('CLI hosts preserve proxy prefixes and omit the SDK API suffix', () => {
@@ -20,11 +21,12 @@ test('unresolved desktop URLs use an explicit server placeholder', () => {
   assert.ok(buildCLIConnectCommand('/api/v1', 'wails://wails.localhost').includes("--host 'https://your-server.com'"))
 })
 
-test('copyable host arguments remain literal in a POSIX shell', () => {
+const posixShell = process.env.TEKNOWRA_TEST_POSIX_SHELL || '/bin/sh'
+test('copyable host arguments remain literal in a POSIX shell', { skip: !existsSync(posixShell) }, () => {
   const host = "https://kb.example.com/team'/$HOME/`printf-injected`/$(printf-injected)"
   const command = buildCLIConnectCommand(`${host}/api/v1`, 'https://kb.example.com')
   const argument = command.split(' --host ')[1]!.split(' --use')[0]!
-  const result = spawnSync('/bin/sh', ['-c', `printf '%s' ${argument}`], { encoding: 'utf8' })
+  const result = spawnSync(posixShell, ['-c', `printf '%s' ${argument}`], { encoding: 'utf8' })
   assert.equal(result.status, 0)
   assert.equal(result.stderr, '')
   assert.equal(result.stdout, "https://kb.example.com/team'/$HOME/%60printf-injected%60/$(printf-injected)")

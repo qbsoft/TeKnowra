@@ -6534,6 +6534,9 @@ export default {
       fallbackPrompt: 'Prompt to guide model response when no answer is found in knowledge base'
     },
     tools: {
+      mcpNameDegraded: "Some tool names are unavailable; check the service connection.",
+
+
       thinking: 'Thinking',
       thinkingDesc: 'Dynamic and reflective problem-solving thinking tool',
       todoWrite: 'Plan',

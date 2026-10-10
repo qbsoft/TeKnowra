@@ -873,6 +873,7 @@ export default {
         ingest: 'Запись (включайте осторожно)',
       },
       tools: {
+
         list_knowledge_bases: 'Список баз знаний',
         list_knowledge_basesDesc: 'Возвращает базы знаний в области и поддерживаемые режимы поиска',
         search_knowledge: 'Семантический поиск',
@@ -1493,6 +1494,8 @@ export default {
       description: 'Встройте агента на свою веб-страницу: посетители смогут общаться через встроенное окно чата или плавающую кнопку. Область баз знаний следует настройкам этого агента.'
     },
     tools: {
+      mcpNameDegraded: "Some tool names are unavailable; check the service connection.",
+
       thinking: 'Размышление',
       thinkingDesc: 'Динамический инструмент рефлексивного решения проблем',
       todoWrite: 'Планирование',
