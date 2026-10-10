@@ -29,14 +29,14 @@ func has(list []string, name string) bool {
 // drifts into "and set this up to repeat" would spawn two, then four, and every
 // individual job would look legitimate.
 func TestWithoutSelfScheduling_StripsCronjob(t *testing.T) {
-	agent := agentWithTools(tools.ToolThinking, tools.ToolCronjob, tools.ToolKnowledgeSearch)
+	agent := agentWithTools(tools.ToolThinking, tools.ToolCronjob, tools.ToolSearchKnowledge)
 
 	got := withoutSelfScheduling(agent)
 
 	if has(got.Config.AllowedTools, tools.ToolCronjob) {
 		t.Fatal("cronjob survived into a cron run — jobs can create jobs")
 	}
-	for _, keep := range []string{tools.ToolThinking, tools.ToolKnowledgeSearch} {
+	for _, keep := range []string{tools.ToolThinking, tools.ToolSearchKnowledge} {
 		if !has(got.Config.AllowedTools, keep) {
 			t.Errorf("%s was dropped; only cronjob should be removed", keep)
 		}
