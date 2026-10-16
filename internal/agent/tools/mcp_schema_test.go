@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -234,7 +235,12 @@ func TestMCPSchemaDoesNotLoadExternalResources(t *testing.T) {
 	defer server.Close()
 	file := filepath.Join(t.TempDir(), "schema.json")
 	require.NoError(t, os.WriteFile(file, []byte(`{"type":"object"}`), 0o600))
-	for _, ref := range []string{server.URL, "file://" + file} {
+	filePath := filepath.ToSlash(file)
+	if filepath.VolumeName(file) != "" {
+		filePath = "/" + filePath
+	}
+	fileRef := (&url.URL{Scheme: "file", Path: filePath}).String()
+	for _, ref := range []string{server.URL, fileRef} {
 		schema := json.RawMessage(fmt.Sprintf(`{"$ref":%q}`, ref))
 		tool := NewMCPTool(&types.MCPService{}, &types.MCPTool{InputSchema: schema}, nil, nil, 0)
 		require.ErrorContains(t, tool.ValidateArguments(json.RawMessage(`{}`)), "no URLLoader set")
