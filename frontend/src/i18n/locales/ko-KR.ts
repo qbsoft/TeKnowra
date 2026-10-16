@@ -2134,7 +2134,7 @@ export default {
     askUser: '사용자에게 질문'
   },
   assistant: {
-    title: 'WeKnora 어시스턴트',
+    title: 'TeKnowra 어시스턴트',
     newConversation: '새 대화',
     history: '대화 기록',
     untitledConversation: '제목 없는 대화',
@@ -5057,7 +5057,7 @@ export default {
       systemActor: '시스템',
       actorWithAPIKey: '{actor} · API Key · {name}',
       actorAPIKey: 'API Key · {name}',
-      viaAssistant: 'WeKnora 어시스턴트 경유',
+      viaAssistant: 'TeKnowra 어시스턴트 경유',
       knowledgeBase: '지식 베이스',
       countItems: '{count}개 항목',
       titleWithCount: '{title} 외 {count}개',

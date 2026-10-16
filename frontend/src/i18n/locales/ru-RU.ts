@@ -2134,7 +2134,7 @@ export default {
     askUser: 'Вопрос пользователю'
   },
   assistant: {
-    title: 'Ассистент WeKnora',
+    title: 'Ассистент TeKnowra',
     newConversation: 'Новый диалог',
     history: 'История диалогов',
     untitledConversation: 'Диалог без названия',
@@ -5057,7 +5057,7 @@ export default {
       systemActor: 'Система',
       actorWithAPIKey: '{actor} · API Key · {name}',
       actorAPIKey: 'API Key · {name}',
-      viaAssistant: 'Через ассистента WeKnora',
+      viaAssistant: 'Через ассистента TeKnowra',
       knowledgeBase: 'База знаний',
       countItems: '{count} элем.',
       titleWithCount: '{title} и ещё {count}',

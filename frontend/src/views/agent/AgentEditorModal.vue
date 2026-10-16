@@ -2801,6 +2801,7 @@ const groupedAvailableTools = computed(() => {
           value: x.authorization_key,
           label: x.tool_name,
           description: x.description,
+          unmet: false,
           disabled: false,
           disabledReason: undefined,
           danger: false,

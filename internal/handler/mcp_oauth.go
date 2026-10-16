@@ -454,7 +454,7 @@ func (h *MCPOAuthHandler) ResolveMCPOAuth(c *gin.Context) {
 
 	switch decision {
 	case "cancel", "reject", "skip":
-		if err := h.resolveOAuthPrompt(c, tenantID, gateUserID, pendingID, approval.Decision{
+		if err := h.resolveOAuthPrompt(c, gateUserID, pendingID, approval.Decision{
 			Approved: false,
 			Reason:   "user canceled",
 		}); err != nil {
@@ -496,7 +496,7 @@ func (h *MCPOAuthHandler) ResolveMCPOAuth(c *gin.Context) {
 		return
 	}
 
-	if err := h.resolveOAuthPrompt(c, tenantID, gateUserID, pendingID, approval.Decision{Approved: true}); err != nil {
+	if err := h.resolveOAuthPrompt(c, gateUserID, pendingID, approval.Decision{Approved: true}); err != nil {
 		switch {
 		case stderrors.Is(err, approval.ErrPendingNotFound):
 			c.Error(errors.NewNotFoundError("pending authorization not found or already completed"))
@@ -549,7 +549,7 @@ func (h *MCPOAuthHandler) CancelMCPOAuth(c *gin.Context) {
 		return
 	}
 
-	if err := h.resolveOAuthPrompt(c, tenantID, gateUserID, pendingID, approval.Decision{
+	if err := h.resolveOAuthPrompt(c, gateUserID, pendingID, approval.Decision{
 		Approved: false,
 		Reason:   "user canceled",
 	}); err != nil {
@@ -576,8 +576,14 @@ func (h *MCPOAuthHandler) CancelMCPOAuth(c *gin.Context) {
 // resolveOAuthPrompt records a decision on an in-conversation OAuth prompt.
 // The embed routes carry session_id, which pins the prompt to that session.
 func (h *MCPOAuthHandler) resolveOAuthPrompt(
-	c *gin.Context, tenantID uint64, userID, pendingID string, d approval.Decision,
+	c *gin.Context, userID, pendingID string, d approval.Decision,
 ) error {
+	// OAuth credentials are looked up in the resource's workspace; the prompt
+	// is owned by the caller's workspace, even when its agent is shared.
+	tenantID := types.CallerFromContext(c.Request.Context()).TenantID
+	if tenantID == 0 {
+		tenantID = c.GetUint64(types.TenantIDContextKey.String())
+	}
 	return h.gate.Resolve(c.Request.Context(), approval.ResolveRequest{
 		TenantID:  tenantID,
 		UserID:    userID,

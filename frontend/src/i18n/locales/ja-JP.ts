@@ -3248,7 +3248,7 @@ export default {
       systemActor: 'システム',
       actorWithAPIKey: '{actor} · API Key · {name}',
       actorAPIKey: 'API Key · {name}',
-      viaAssistant: 'WeKnora アシスタント経由',
+      viaAssistant: 'TeKnowra アシスタント経由',
       knowledgeBase: 'ナレッジベース',
       countItems: '{count}件',
       titleWithCount: '{title}ほか{count}件',
@@ -6119,7 +6119,7 @@ export default {
       videoNotSupported: 'お使いのブラウザは動画再生に対応していません'
     },
     assistant: {
-      title: 'WeKnora アシスタント',
+      title: 'TeKnowra アシスタント',
       newConversation: '新しい会話',
       history: '会話履歴',
       untitledConversation: '無題の会話',
