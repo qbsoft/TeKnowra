@@ -17,6 +17,28 @@
   letter-spacing: normal;
   -webkit-font-smoothing: antialiased;
 
+  :deep(details.methodology-note) {
+    margin: 16px 0 8px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: var(--td-bg-color-secondarycontainer);
+    color: var(--td-text-color-secondary);
+    font-size: var(--app-text-sm);
+    line-height: 1.6;
+    summary {
+      cursor: pointer;
+      font-size: var(--app-text-sm);
+      font-weight: 400;
+      color: var(--td-text-color-secondary);
+    }
+    .methodology-note-body {
+      margin-top: 10px;
+      p, li, strong { font-size: var(--app-text-sm); color: var(--td-text-color-secondary); }
+      p { margin-top: 4px; }
+    }
+    summary:focus-visible { outline: 2px solid var(--td-brand-color); outline-offset: 3px; }
+  }
+
   // Trailing fade on the newest streamed characters: the tail is wrapped in
   // this span (see applyStreamingTailFade) so its right edge dissolves, giving
   // a soft "just typed" reveal that settles once streaming stops and the wrap

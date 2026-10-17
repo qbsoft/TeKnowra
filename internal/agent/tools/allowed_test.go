@@ -20,6 +20,21 @@ func TestEffectiveAllowedToolsSeparatesUnsetFromEmpty(t *testing.T) {
 }
 
 func TestCheckAllowedTools(t *testing.T) {
+	t.Run("per-agent MCP grants survive new-agent validation", func(t *testing.T) {
+		grant := AgentMCPToolKey("4f95e0dd-aa99-4628-a3d2-ac4c51fa7871", "find_customer")
+		check := CheckAllowedTools(nil, []string{ToolSearchKnowledge, grant, grant})
+		require.Empty(t, check.Rejected)
+		require.Empty(t, check.KeptUnknown)
+		require.Equal(t, []string{ToolSearchKnowledge, grant}, check.Tools)
+	})
+
+	t.Run("malformed MCP grants and unknown built-ins remain rejected", func(t *testing.T) {
+		names := []string{"mcp:", "mcp::find_customer", "mcp:service:", "mcp_service_find_customer", "serch_knowledge"}
+		check := CheckAllowedTools(nil, names)
+		require.Equal(t, names, check.Rejected)
+		require.Empty(t, check.Tools)
+	})
+
 	t.Run("an unset list stays unset", func(t *testing.T) {
 		require.Equal(t, AllowedToolsCheck{}, CheckAllowedTools([]string{"none"}, nil))
 	})

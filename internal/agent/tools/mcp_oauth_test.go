@@ -213,8 +213,10 @@ func TestOAuthRetryRecyclesOnlyOutdatedConnections(t *testing.T) {
 			}}
 			sess := &MCPOAuthSession{EventBus: event.NewEventBus(), ApprovalCtx: ctx, ExecTimeout: 5 * time.Second}
 
-			aliceConn, err := getOrCreateMCPClientWithOAuthRetry(ctx, manager, service, gate, sess, "tool", "call-1")
+			aliceConn, operationCtx, cancel, err := getOrCreateMCPClientWithOAuthRetry(ctx, manager, service, gate, sess, "tool", "call-1")
+			defer cancel()
 			require.NoError(t, err)
+			require.NoError(t, operationCtx.Err(), "the caller still owns the renewed call window")
 			require.True(t, aliceConn.IsConnected())
 			require.Equal(t, tc.otherUserSurvives, bobConn.IsConnected())
 		})

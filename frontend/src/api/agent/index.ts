@@ -1,5 +1,11 @@
 import { get, post, put, del } from "../../utils/request";
 
+export interface ExecutionCatalog {
+  engines: Array<{id: string; name: string; unsupported_sections: string[]; unsupported_settings: string[]}>;
+  eino_definitions: Array<{id: string; name: string; knowledge: boolean; tools: string[] | null; implementation_version: string}>;
+}
+export function getExecutionCatalog() { return get<{data:ExecutionCatalog}>('/api/v1/agents/execution-catalog'); }
+
 // 智能体配置
 // 智能推理下的智能体类型预设 ID
 // 'rag-qa'       : 经典文档/FAQ 分块 RAG
@@ -31,6 +37,8 @@ export interface QuestionSuggestionConfig {
 }
 
 export interface CustomAgentConfig {
+	 execution_engine?: '' | 'native' | 'langflow' | 'eino';
+  eino_definition?: string;
   // ===== 基础设置 =====
   agent_mode?: 'quick-answer' | 'smart-reasoning';  // 运行模式：quick-answer=RAG模式, smart-reasoning=ReAct Agent模式
   // 智能推理模式下的类型预设，用于一键应用"系统提示词 + 工具 + KB 兼容性"组合
@@ -119,6 +127,8 @@ export interface CustomAgentConfig {
   // 缺省（旧数据）等同于 true：这是一个只能"关"的开关，空间设置关闭时
   // 这里打开也不会生效。
   memory_enabled?: boolean;
+  disable_chat_history_indexing?: boolean;
+  allow_session_attachments?: boolean;
 
   // ===== 检索策略设置 =====
   embedding_top_k?: number;         // 向量召回TopK

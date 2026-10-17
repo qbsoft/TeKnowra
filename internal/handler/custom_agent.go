@@ -261,6 +261,10 @@ func (h *CustomAgentHandler) CreateAgent(c *gin.Context) {
 		_ = c.Error(errors.NewBadRequestError(err.Error()))
 		return
 	}
+	if err := agent.Config.ValidateExecutionEngine(); err != nil {
+		_ = c.Error(errors.NewBadRequestError(err.Error()))
+		return
+	}
 	if err := agent.Config.QuestionSuggestions.Validate(); err != nil {
 		c.Error(errors.NewBadRequestError(err.Error()))
 		return
@@ -570,6 +574,10 @@ func (h *CustomAgentHandler) PatchAgent(c *gin.Context) {
 		return
 	}
 	req := patch.apply(existing)
+	if err := req.Config.ValidateExecutionEngine(); err != nil {
+		_ = c.Error(errors.NewBadRequestError(err.Error()))
+		return
+	}
 	if patch.SelectedSkills != nil && len(*patch.SelectedSkills) > 50 {
 		_ = c.Error(errors.NewBadRequestError("selected_skills must contain at most 50 names"))
 		return
@@ -680,6 +688,10 @@ func (h *CustomAgentHandler) saveAgentUpdate(c *gin.Context, id string, req Upda
 		Config:      req.Config,
 	}
 	agent.EnsureDefaults()
+	if err := agent.Config.ValidateExecutionEngine(); err != nil {
+		_ = c.Error(errors.NewBadRequestError(err.Error()))
+		return
+	}
 	if err := agent.Config.QuestionSuggestions.Validate(); err != nil {
 		c.Error(errors.NewBadRequestError(err.Error()))
 		return

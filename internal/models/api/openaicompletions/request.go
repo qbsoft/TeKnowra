@@ -335,10 +335,21 @@ func (c *Client) applyTools(body map[string]any, opts *api.Options) {
 // dialect. See api.ThinkingFormat for the dialects.
 func (c *Client) applyThinking(body map[string]any, opts *api.Options, stream bool) {
 	s := c.cfg.Settings
+	thinkingTypeOverride := opts != nil && (opts.ThinkingControl == "thinking_type" || opts.ThinkingControl == string(api.ThinkingFormatThinkingType))
+	if thinkingTypeOverride {
+		s.ThinkingFormat = api.ThinkingFormatThinkingType
+	}
 	if s.ThinkingFormat == api.ThinkingFormatNone || s.ThinkingFormat == "" {
 		return
 	}
 	levels := c.cfg.ThinkingLevels
+	if thinkingTypeOverride && !levels.Supports(api.ReasoningOff) {
+		levels = make(api.ThinkingLevelMap, len(c.cfg.ThinkingLevels)+1)
+		for level, value := range c.cfg.ThinkingLevels {
+			levels[level] = value
+		}
+		levels[api.ReasoningOff] = api.StringPtr("")
+	}
 	level, requested := opts.Reasoning()
 	if !requested {
 		if !s.ThinkingAlwaysSend {

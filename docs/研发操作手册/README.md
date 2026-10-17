@@ -1,6 +1,6 @@
 # TeKnowra 企业 Agent 研发操作手册
 
-版本：1.4 · 核实日期：2026-10-17 · 适用范围：当前本机 TeKnowra fork、Langflow 和 Eino 双引擎接入。
+版本：1.5 · 核实日期：2026-10-17 · 适用范围：当前本机 TeKnowra fork、Langflow 和 Eino 双引擎接入。
 
 本手册帮助研发把企业需求做成可配置、可发布、可追溯的 Agent。管理员先准备身份、工作空间、模型和系统连接；研发配置流程、资源与业务规则；业务人员在 TeKnowra 聊天中使用并按自身权限授权。**Langflow 是新建默认引擎，Eino 按已有代码场景选用。**
 
@@ -58,8 +58,8 @@ Casdoor 尚未成为本机 Langflow 画布的统一登录入口；画布有独�
 
 | 内容 | 当前本机位置 / 入口 |
 |---|---|
-| 平台源码 | `D:/TeKnowra/repo`，Git main |
-| MCP 源码 | `D:/TeKnowra/tyer-mcp-server`，Git master |
+| 平台源码 | `D:/TeKnowra/repo`；默认分支 main，本轮工作分支 `cursor/mcp-oauth-return-to-current-page` |
+| MCP 源码 | `D:/TeKnowra/tyer-mcp-server`；默认分支 master，本轮工作分支 `tyer/agent-infrastructure-20261017` |
 | CRM 与语义项目 | `D:/CRM/CRM2`；模型 `crm/ask-wren`；网关通用实现 `crm/semantic-wren` |
 | 平台页面 / 后端 | `http://localhost:5173` / `http://127.0.0.1:8080` |
 | Langflow 研发页面 | `http://127.0.0.1:7861` |
@@ -275,6 +275,19 @@ MCP 组件工具名留空表示该服务**全部已绑定的工具**，不是该
 
 执行时 `args` 必须为空，只接受最多 64 KiB 的单个 JSON 对象作为 stdin；不能传任意命令、原件路径或凭据。金额用十进制字符串，比例用数字。schema 只支持当前实现的简单字段约束，不使用远程引用或复杂组合。入口与 schema 检查不等于脚本内容安全，脚本仍须研发审查并在受控沙箱运行。
 
+
+#### 已有业务技能怎样选
+
+| 技能目录 | 用途和配套能力 | 注意事项 |
+|---|---|---|
+| `tyer-contract-session-review` | 本会话合同附件、授权企业制度与 `scripts/calculate.py` | 当前附件合同场景优先使用；不自动入库，不写CRM |
+| `tyer-langflow-contract-evidence` | 历史知识库合成合同验收，读取 `REFERENCE.md` 和 `scripts/report.py` | 包含TEST-A-001等验收约定，不是新企业合同的默认模板 |
+| `tyer-contract-review` | CRM审查清单、提交审查发现、获取审查汇总 | 依赖CRM-REVIEW的四个具体工具；包含业务写入，不能当作只读附件技能直接替换 |
+| `tyer-market-price-collector` | 浏览器行情取证，按需用CRM报价工具录入 | 技能不自带浏览器；当前双引擎接入未提供完整浏览器执行能力，不能仅勾选便宣称自动采集可用 |
+| `tyer-skill-selftest` | 技能元数据、正文、附加资源三级加载自检 | 不执行脚本、不证明MCP或业务链路已通过 |
+
+自定义技能目录只是预置来源；安装到目标沙箱、绑定资源与工具、授权固定入口并发布后才成为该Agent的可执行能力。历史验收技能保留，不批量迁移或改写。
+
 ### 4.5 多专家如何连线
 
 合同/信用组合按下表操作。不要用主协调 Agent 自己编写的总结替代受控专家结果。
@@ -427,6 +440,20 @@ Get-NetTCPConnection -State Listen -LocalPort 8765 -ErrorAction SilentlyContinue
 缺令牌 → 工具暂停 → 授权卡 → 点击去授权 → 浏览器本人登录 → 回到**同一个环境、同一任务** → 等待恢复与实际工具结果。登录成功页不代表任务已成功。
 
 检查任务是否仍在等待、授权主体是否正确、回调端口是否一致、工具结果是否出现、是否只调用一次。误用 admin 授权的 sales01 会话不能作为低权限通过证明；应撤销该连接的错误授权，重新发起本人测试。旧授权页、旧任务登录不能补认到新任务。超时后应新建任务，不篡改超时状态或静默重放。
+
+
+### 6.6 现有 CRM 工具按什么职责使用
+
+| 职责 | 工具与使用顺序 |
+|---|---|
+| 客户与信用只读 | `find_customer`确认唯一字符串ID，再调用`get_customer_credit_control`、`get_customer_performance`、`get_customer_profile`、`list_receivables`；订单详情用`get_order_detail` |
+| 固定指标与语义问数 | `list_business_metrics` / `query_business_metric`；`list_ask_objects` / `ask_business`，由CRM/Wren网关校验语义和本人权限 |
+| 价量机制与模拟分析 | `analyze_sales_mechanism`，环境、输入和结论边界见7.10 |
+| 报价记录 | `find_price_products`唯一匹配商品 → `list_competitor_prices`核对已有记录 → `record_competitor_price`写入 |
+
+报价录入先阅读MCP仓库 `docs/competitor-price-tools.md` 与配套技能，字段必须有来源、规格、币种、单位、税费/交付口径、报价日期及带时区采集时间。缺关键证据就保留待复核，不能填“未知”凑过校验。当前没有服务端原子幂等保障，应串行处理，不开启并发自动写入。只读场景不要授予该写入工具；接入存在不等于自动行情采集已经完成。
+
+CRM-REVIEW和邮件服务的工具以各自README和实际注册目录为准，按独立鉴权用途配置。普通查询不应为了省一次授权改接共用服务账号。新企业不需要一次开放全部工具，按场景选择最小集合。
 
 ## 7. 用 Wren 技能建立业务语义模型
 
@@ -616,6 +643,76 @@ Set-Location D:/CRM/CRM2/crm/ask-wren
 
 无需看板服务时，可阅读 `D:/CRM/CRM2/crm/ask-wren/target/model-book.html` 离线说明书。它是生成时快照，不代表当前模型已重新构建。顶部齿轮涉及模型配置，不截图或传播密钥。
 
+
+### 7.10 用 DoWhy 分析经营机制
+
+**Wren 负责按业务语义和本人权限取数；DoWhy 负责执行已定义的分析计算。** DoWhy 已接入 CRM MCP，不是独立 Agent 引擎，也不代替 Wren 建模技能。业务研发通过 MCP 工具使用它，不需要在画布里写任意 Python 或直接连接业务数据库。
+
+实际链路是：TeKnowra 当前用户 → 本人 CRM OAuth → CRM 菜单与数据范围 → Wren 固定语义模板及网关校验 → 完整授权明细 → MCP 启动独立 DoWhy 子进程 → 返回结构化证据与结论。DoWhy 子进程只接收本次 JSON 数据，不接收数据库、OAuth 或模型凭据。
+
+#### 管理员准备独立计算环境
+
+1. 查看 MCP 仓库 `mcp-tyer-crm/requirements-dowhy.txt`，当前固定 `dowhy==0.14`。在独立 Python 环境安装；不要往正在运行 FastMCP 的环境直接追加整套科学计算依赖。
+2. 本机已存在 `D:/TeKnowra/research/dowhy-pilot-20261006/.venv/Scripts/python.exe`，可复用，不必新装。新环境由管理员创建虚拟环境，再执行该解释器的 `-m pip install -r mcp-tyer-crm/requirements-dowhy.txt`。
+3. 在 **MCP 进程**配置 `DOWHY_PYTHON` 为解释器绝对路径，并按既有维护方式重新加载该服务。Linux 或容器必须填该进程可见的路径，不能照抄本机 D 盘路径。
+4. 核对 CRM 已有 `/askObject/sales-mechanism-data`、本人菜单权限、Wren 模型和固定取数模板。只注册工具而没有后端取数能力，不能运行。
+
+此步骤不需要修改 TeKnowra 模型配置，也不能用共用管理员令牌替代用户授权。当前未配置环境返回 `ANALYSIS_NOT_CONFIGURED`；运行失败返回 `ANALYSIS_FAILED`，都不能让模型编造一个“分析成功”的结果。
+
+#### 在 Langflow 中配置与使用
+
+1. 在 TeKnowra 智能体的 MCP 服务中选现有 CRM MCP，将 `analyze_sales_mechanism` 加入允许工具。保留按人 OAuth。
+2. 保存资源配置，按第4.2节复制并连接目录。在 TeKnowra MCP 组件中选择该工具，接入原生 Agent 的 Tools；不要把计算环境路径或业务系统密钥放进提示词。
+3. 提示词要求用户给出**准确商品、规格和两个明确月份**。未给齐时先澄清，多个规格候选交给用户选，不能任取一项代表整个企业。
+4. 固定发布，在 TeKnowra 聊天试运行。缺少本人令牌时走授权卡，恢复同一任务；`thread_id` 使用平台注入的真实会话上下文，不要求用户编造 UUID。
+5. 检查真实工具步骤与返回字段，保留 `planId`、期间、数量金额核对及限制说明。`ask_business` 可用于后续明细钻取，但不能把任意新查结果冒充原分析的同一快照。
+
+工具输入如下；没有列出的字段不能让模型自由扩展为 SQL 或代码。
+
+| 字段 | 配置要求 |
+|---|---|
+| `product_name` | 准确商品名，非空，最多100字符 |
+| `current_month` / `previous_month` | 不同的 `YYYY-MM` 月份，年份2000～2100；由服务计算完整期间 |
+| `specification` | 明确规格；有歧义先选，不跨规格或单位强行合并 |
+| `thread_id` | 平台真实会话上下文 |
+| `include_business_evidence` | 默认不要求附加经营因果试点；只有明确模拟分析才开启 |
+| `scenario` | 模拟试点场景枚举，不是任意生产因果问题 |
+
+#### 当前已实现什么，结果怎样读
+
+**第一层是价量机制分解。** 图和乘积机制来自“销售额＝销量×加权成交价”的业务恒等式，不是从两个期间的汇总值中发现经营因果。计算先对平授权范围内完整明细，不能静默丢弃坏行、截断、缺失或重复记录，再用 DoWhy GCM 计算四种价量组合，并对称分摊数量和价格贡献。
+
+例如纯合成数据：上期100吨、70万元，本期120吨、96万元。总额增加26万元，数量贡献15万元、加权成交价贡献11万元。此例只是说明计算口径，不是某个客户的实际运行结果。价格项包含客户、订单组合变化，不能说“调价带来了11万元收入”，更不能据此断言业务员或交付问题是根因。
+
+| 返回字段 | 必须检查的含义 |
+|---|---|
+| `ok`、`dowhyExecuted`、`dowhyVersion` | 是否真实成功执行及所用版本；不能只看自然语言答案 |
+| `detailReconciliation`、`reconciliation.passed` | 明细与汇总是否对平；失败必须保留失败 |
+| `contributions`、`salesChange` | 两项贡献及总变化；展示舍入差额独立标注，不当业务因素 |
+| `evidence` | 本人范围、期间、行数、取数计划等依据 |
+| `businessRootCauseVerified` | 当前为 `false`；不得解释成已证明真实经营根因 |
+| `answerText`、`limitations` | 优先保留工具的可信结论和适用边界，避免模型另算另编 |
+
+**第二层是限定的模拟经营因果试点。** 仅在用户明确要求本机模拟、商品名带“模拟-”、`include_business_evidence=true` 时使用。当前场景为“交付延迟影响采购”“延迟存在但不影响采购”“市场需求下降”“成交价上涨”“多因素叠加”。数据还必须标记 `simulation=true`；不是企业真实因果分析的通用入口。
+
+该试点按客户配对两期，至少200条记录、100个完整客户；固定人工因果图和线性加性假设，按客户拆分训练与留出集，并进行50次客户聚类 bootstrap。输出包括延迟效应、探索性区间、留出误差及解释残差。当前门槛为留出采购量 RMSE 不超过5、解释残差不超过每客户2吨；不合格直接拒绝。结果是**每客户后续采购量**的变化，不能与第一层销售额贡献混加。它仍返回 `businessRootCauseVerified=false`，没有完成图证伪或噪声独立性验证。
+
+新增真实企业因果场景，需要另外确认时间顺序、混杂因素、样本完整性、业务因果图和验证标准，再扩展受控工具。只新建 Wren MDL 或换提示词，不能自动获得可信因果推断。
+
+#### 定向验证和排错
+
+先用独立 DoWhy 解释器执行 MCP 仓库的 `tests/test_dowhy_runner.py`、`tests/test_repeat_purchase.py`、`tests/test_sales_reconciliation.py`；MCP 本身使用自己的解释器验证 `tests/test_sales_mechanism.py`。这些是离线单元测试，不等于真实账号权限或生产数据验收。完整场景另记录：用户与资源范围、真实工具调用、取数计划、输入口径、真实执行标记、核对结果和失败拒绝。
+
+| 问题 | 排查位置 |
+|---|---|
+| 未配置 / 缺少模块 | MCP 进程的 `DOWHY_PYTHON`，以及对应解释器的依赖；不是 Langflow 解释器 |
+| 401 / 授权卡 | 当前用户 CRM OAuth 与回调；不借用发布者令牌 |
+| 403 / 无数据 | CRM 菜单及数据范围、Wren 固定模板与计划；不放宽权限 |
+| 规格不明确 / 对平失败 | 商品候选、期间、单位、明细完整性；不静默删数据凑结果 |
+| 模拟试点拒绝 | 模拟标记、场景、配对、样本量、误差和残差；不修改门槛以得到成功 |
+
+源码定位：MCP 仓库 `mcp-tyer-crm/sales_mechanism.py`（工具与子进程）、`dowhy_runner.py`（价量与快照核对）、`repeat_purchase_runner.py`（模拟试点）、`requirements-dowhy.txt`（独立依赖）；CRM 侧入口属于 CRM 仓库，不由 TeKnowra 自己绕过网关取数。
+
 ## 8. 共享 Agent 与员工使用
 
 1. 源空间管理员或有权限研发进入 Agent“共享管理”，选择允许的接收空间/对象和权限，保存。
@@ -782,3 +879,27 @@ AgentID / FlowID或Eino定义 / 发布ID或实现指纹：
 原始[界面截图核对记录](界面截图核对记录.json)保留原样。完整依据见[自动保存变化核实报告](自动保存变化核实报告.md)和[逐字段核实结果](自动保存变化核实结果.json)。记录不含密码、目录票据或 API Key。本次只确认这两张草稿此次变化的性质，不能据此假定未来所有自动保存都不改变配置；后续实际改参数或更新组件仍按既定发布、验收流程处理。
 
 本轮是界面与步骤核对，不是新一轮模型、工具或权限验收。目录未连接的候选空态已如实展示；未通过额外授权或刷新动作把它改成成功截图。
+
+
+### 12.6 实现与操作说明覆盖检查
+
+已额外核对全部5个 `tyer-*` 预置技能，以及CRM服务直接注册与模块注册的工具分组；见4.4和6.6。
+
+本表用于研发移交时反查实际能力，不把“源码存在”自动算作“客户场景已验收”。已有截图仍对应原拍摄页面；本次文档审查没有重新打开流程或触发自动保存。
+
+| 实际能力与实现入口 | 操作说明 | 使用边界 |
+|---|---|---|
+| Casdoor OIDC、业务 CAS / 本人 OAuth | 1.1、2.3、6.5；部署手册第5章 | 平台登录与业务授权分开；画布独立认证 |
+| 模型、知识库、MCP 动态目录与能力桥 | 3.2、4.2；`langflowcatalog`、`hostcapability` | 目录连接不授予超出员工范围的业务权限 |
+| 附件暂存与会话索引策略 | 3.3、第10章；`session_attachment_staging.go` | 合同不自动入库，历史索引策略不批量改写 |
+| 技能、固定脚本与沙箱 | 4.4、第10章；`internal/sandbox/` | 需配置沙箱和快照镜像，不等同任意代码执行 |
+| Langflow 多专家、固定发布和激活旧版 | 4.5～4.6；`integrations/langflow/`、`langflowrelease` | 发布与草稿分开；事实复核失败不自动重试到成功 |
+| Eino 定义目录与实现指纹 | 第5章；`einodef`、`einoruntime` | 当前只读单次文本；不承诺附件、技能、多轮或共享 |
+| MCP 开发、注册与任务授权恢复 | 第6章；MCP `server.py`、`tyer_mcp_core/` | 回调须按环境登记，CRM雪花ID始终字符串 |
+| Wren MDL、语义、指标与审定 | 7.1～7.9；CRM `ask-wren/`、`semantic-wren/` | 建模后仍需业务口径及权限验收 |
+| DoWhy 机制分解与模拟试点 | 7.10；MCP 三个分析模块 | 不宣称真实经营根因已验证 |
+| 共享、撤权与运行诊断 | 第8～9章；`langflow_authority`、消息诊断 | 当前用户实时范围；诊断专用接口也有角色限制 |
+| 并发、中断收尾与恢复 | 9.3；`runbudget`、Redis live marker | 进程内并发2，本机单实例；不自动重放工具 |
+| 安装依赖、配置、备份和回退 | [部署操作手册](../部署操作手册/README.md) | 无新交付包；干净Linux和生产容量仍需目标环境确认 |
+
+移交新增业务时，先补业务口径、资源与操作步骤，再用本表检查是否涉及新的能力入口；不能只在速查表列模块名便算完成说明。

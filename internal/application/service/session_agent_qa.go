@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Tencent/WeKnora/internal/agent"
+	"github.com/Tencent/WeKnora/internal/agent/einodef"
 	"github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -172,10 +173,21 @@ func (s *sessionService) AgentQA(
 	var llmContext []chat.Message
 	if agentConfig.MultiTurnEnabled {
 		budget := agent.HistoryTokenBudget(agentConfig)
-		llmContext, agentConfig.ContextTokenScale, err = LoadAgentHistory(
+		loadHistory := LoadAgentHistory
+		langflowHistory := false
+		if s.cfg != nil {
+			_, langflowHistory = s.cfg.LangflowBinding(agentConfig.AgentID)
+		}
+		if langflowHistory {
+			loadHistory = LoadAgentTextHistory
+		}
+		llmContext, agentConfig.ContextTokenScale, err = loadHistory(
 			ctx, s.messageRepo, sessionID, budget, agentConfig.RetainRetrievalHistory,
 		)
 		if err != nil {
+			if langflowHistory {
+				return fmt.Errorf("Langflow会话历史加载失败，未启动任务：%w", err)
+			}
 			logger.Warnf(ctx, "Failed to load agent history from DB: %v, continuing without history", err)
 			llmContext = []chat.Message{}
 		}
@@ -224,14 +236,14 @@ func (s *sessionService) AgentQA(
 	layout := sessionWorkspaceLayout(
 		ctx, sessionID, mgr, layoutErr, s.hostSandbox, agentConfig.SandboxConfigID,
 	)
+	textProjectionOnly := false
+	if binding, enabled := s.cfg.LangflowBinding(agentConfig.AgentID); enabled {
+		textProjectionOnly = binding.AllowSessionAttachments || agentConfig.AllowSessionAttachments
+	}
 	if inputStore != nil && strings.TrimSpace(layout.InputDir) != "" {
-		sessionAttachments, loadErr := s.messageRepo.GetSessionAttachments(ctx, sessionID)
-		if loadErr != nil {
-			return fmt.Errorf("load session attachments for sandbox staging: %w", loadErr)
-		}
-		stagedAttachments, err = stager.stageSessionAttachments(
-			ctx, sessionID, agentConfig.SandboxConfigID, req.Session.TenantID, sessionAttachments, layout,
-		)
+		stagedAttachments, err = stageAttachmentInventory(ctx, s.messageRepo, sessionID, textProjectionOnly, func(rows types.MessageAttachments) ([]stagedSessionAttachment, error) {
+			return stager.stageSessionAttachments(ctx, sessionID, agentConfig.SandboxConfigID, req.Session.TenantID, rows, layout)
+		})
 		if err != nil {
 			return fmt.Errorf("restore session attachments into sandbox: %w", err)
 		}
@@ -247,6 +259,30 @@ func (s *sessionService) AgentQA(
 	}
 
 	// Create agent engine with EventBus
+	if binding, enabled := s.cfg.LangflowBinding(agentConfig.AgentID); enabled {
+		if len(req.ImageURLs) > 0 || (len(req.Attachments) > 0 && (!binding.AllowSessionAttachments || !agentConfig.AllowSessionAttachments)) || req.ImageDescription != "" || req.QuotedContext != "" {
+			return fmt.Errorf("Langflow本阶段仅支持文本与已入库授权知识")
+		}
+		if len(binding.KnowledgeBases) > 0 {
+			if err := s.attachAuthorizedKnowledgeScope(ctx, agentConfig, agentTenantID, req.TagScopes); err != nil {
+				return err
+			}
+		}
+	}
+	if definition, useEino := s.cfg.EinoDefinitionForAgent(agentConfig); useEino {
+		d, published := einodef.Lookup(definition)
+		if !published {
+			return fmt.Errorf("Eino定义尚未发布")
+		}
+		if req.SharedAgentReadOnly || len(req.ImageURLs) > 0 || len(req.Attachments) > 0 || req.ImageDescription != "" || req.QuotedContext != "" {
+			return fmt.Errorf("%s当前仅支持本工作区文本问题和已入库授权文档", d.Name)
+		}
+		if d.Knowledge {
+			if err := s.attachEinoScope(ctx, agentConfig, agentTenantID, req.TagScopes); err != nil {
+				return err
+			}
+		}
+	}
 	logger.Info(ctx, "Creating agent engine")
 	engine, err := s.agentService.CreateAgentEngine(
 		ctx,
@@ -334,15 +370,58 @@ func (s *sessionService) AgentQA(
 	// Execute agent with streaming (asynchronously)
 	// Events will be emitted to EventBus and handled by the Handler layer
 	logger.Info(ctx, "Executing agent with streaming")
+	var state *types.AgentState
 	if req.Resume != nil {
-		_, err = engine.Resume(ctx, sessionID, req.AssistantMessageID, llmContext,
+		state, err = engine.Resume(ctx, sessionID, req.AssistantMessageID, llmContext,
 			req.Resume.Snapshot, req.Resume.Prompt)
 	} else {
-		_, err = engine.Execute(ctx, sessionID, req.AssistantMessageID, agentQuery, llmContext, agentImageURLs)
+		state, err = engine.Execute(ctx, sessionID, req.AssistantMessageID, agentQuery, llmContext, agentImageURLs)
 	}
 	if err != nil {
 		logger.Errorf(ctx, "Agent execution failed: %v", err)
+		var extra map[string]interface{}
+		if metadata, isLangflow := engine.(interface{ RuntimeMetadata() map[string]any }); isLangflow {
+			extra = metadata.RuntimeMetadata()
+			if state != nil {
+				extra["agent_steps"] = state.RoundSteps
+			}
+		}
+		if definition, isEino := s.cfg.EinoDefinitionForAgent(agentConfig); isEino {
+			extra = map[string]interface{}{"definition_version": definition}
+			if state != nil {
+				extra["agent_steps"] = state.RoundSteps
+			}
+		}
 		// Emit error event to the EventBus used by this agent
+		if agentConfig.ExecutionEngine == "eino" || agentConfig.ExecutionEngine == "langflow" || extra != nil {
+			if extra == nil {
+				extra = map[string]interface{}{}
+			}
+			var ds []types.ExecutionDiagnostic
+			if state != nil {
+				ds = state.ExecutionDiagnostics
+			}
+			if len(ds) == 0 {
+				kind := types.ExecutionFailureCode(err)
+				if ctx.Err() != nil {
+					kind = types.ExecutionFailureCode(ctx.Err())
+				}
+				name := "langflow"
+				if _, isEino := s.cfg.EinoDefinitionForAgent(agentConfig); isEino {
+					name = "eino"
+				}
+				d := types.NewExecutionDiagnostic(name, "execution", kind, nil)
+				if state != nil && len(state.RoundSteps) > 0 {
+					last := state.RoundSteps[len(state.RoundSteps)-1]
+					d.Node = last.NodeKey
+					d.RunID = last.RunID
+					d.Definition = last.DefinitionVersion
+					d.Implementation = last.ImplementationVersion
+				}
+				ds = []types.ExecutionDiagnostic{d}
+			}
+			extra["execution_diagnostics"] = ds
+		}
 		eventBus.Emit(ctx, event.Event{
 			Type:      event.EventError,
 			SessionID: sessionID,
@@ -350,6 +429,7 @@ func (s *sessionService) AgentQA(
 				Error:     err.Error(),
 				Stage:     "agent_execution",
 				SessionID: sessionID,
+				Extra:     extra,
 			},
 		})
 	}
@@ -413,6 +493,9 @@ func (s *sessionService) buildAgentConfig(
 		MaxCompletionTokens:           customAgent.Config.MaxCompletionTokens,
 		RetainRetrievalHistory:        customAgent.Config.RetainRetrievalHistory,
 		SharedAgentReadOnly:           req.SharedAgentReadOnly,
+		ExecutionEngine:               customAgent.Config.ExecutionEngine,
+		EinoDefinition:                customAgent.Config.EinoDefinition,
+		AllowSessionAttachments:       customAgent.Config.AllowSessionAttachments,
 		// The model is always told it may call tools in parallel; without
 		// this the engine still ran them one by one, so three searches in
 		// one reply cost three sequential embed/retrieve/rerank rounds.

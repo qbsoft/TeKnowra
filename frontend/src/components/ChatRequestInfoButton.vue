@@ -46,7 +46,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
+import { get } from '@/utils/request';
+import { useAuthStore } from '@/stores/auth';
 import { useI18n } from 'vue-i18n';
 import {
   buildChatRequestDebugPayload,
@@ -61,6 +63,17 @@ const props = defineProps<{
 
 const { t } = useI18n();
 const visible = ref(false);
+const authStore=useAuthStore();
+const executionInfo = ref<{diagnostics?: Array<{code:string; node:string; reasons?:string[]}>; versions?:Array<{definition:string; implementation:string}>; historical_implementation_unknown?:boolean} | null>(null);
+watch([visible,()=>props.session.id,()=>props.sessionId], async ([open]) => {
+  executionInfo.value=null;
+  if (!open || !props.sessionId || !props.session.id || !authStore.hasRole('contributor')) return;
+  const identity=`${props.sessionId}/${props.session.id}`;
+  try {
+    const result=await get<{data:NonNullable<typeof executionInfo.value>}>(`/api/v1/messages/${encodeURIComponent(props.sessionId)}/${encodeURIComponent(String(props.session.id))}/execution-diagnostics`,{silent:true});
+    if (visible.value && identity===`${props.sessionId}/${props.session.id}`) executionInfo.value=result.data;
+  } catch { /* Unsupported role and historic servers disclose no private details. */ }
+});
 
 const debugInfo = computed((): ChatRequestDebugInfo => {
   const s = props.session;
@@ -91,6 +104,14 @@ const rows = computed(() => {
   }
   if (info.sentAt) {
     add('sentAt', 'chat.requestInfoSentAt', new Date(info.sentAt).toLocaleString());
+  }
+  const versions=executionInfo.value?.versions || [];
+  if (versions.length) {
+    list.push({key:'definition',label:'场景 / 发布版本',value:versions[0].definition || '未知'});
+    list.push({key:'implementation',label:'实现版本',value:versions[0].implementation || '历史任务未记录，不补写'});
+  }
+  for (const [index,d] of (executionInfo.value?.diagnostics || []).entries()) {
+    list.push({key:`diagnostic-${index}`,label:'执行诊断',value:[d.code,d.node,...(d.reasons || [])].join(' · ')});
   }
   return list;
 });
@@ -139,6 +160,8 @@ const copyAll = async () => {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  max-height: 360px;
+  overflow-y: auto;
 }
 
 .chat-request-row {

@@ -421,7 +421,7 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
         const reasoningText =
           step.reasoning_content && String(step.reasoning_content).trim()
             ? String(step.reasoning_content)
-            : ''
+            : step.node_key && step.thought ? String(step.thought) : ''
         if (reasoningText) {
           events.push({
             type: 'thinking',
@@ -431,6 +431,9 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
             thinking: false,
             timestamp: stepTimestamp || undefined,
             duration_ms: step.duration || undefined,
+            run_id: step.run_id,
+            node_key: step.node_key,
+            definition_version: step.definition_version,
           })
         }
         const preambleText = step.thought && String(step.thought).trim() ? String(step.thought) : ''
@@ -535,9 +538,10 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
     data: ChatMessage[],
     isScrollType = false,
     newScrollHeight?: number,
+    replaceHistory = false,
   ) => {
     const chatlist = [...data]
-    const existingIds = new Set(messagesList.map((m) => m.id).filter(Boolean))
+    const existingIds = new Set(replaceHistory ? [] : messagesList.map((m) => m.id).filter(Boolean))
     const processed: ChatMessage[] = []
 
     for (const raw of chatlist) {
@@ -613,7 +617,11 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
       processed.push(item)
     }
 
-    if (processed.length > 0) {
+    if (replaceHistory) {
+      // A pre-SSE rejection cannot bind the optimistic user row to its DB id.
+      // Replace from the successful history response, never deduplicate by text.
+      messagesList.splice(0, messagesList.length, ...expandSteerForksInHistory(processed))
+    } else if (processed.length > 0) {
       if (isScrollType) {
         for (let i = processed.length - 1; i >= 0; i--) {
           messagesList.unshift(processed[i])
@@ -672,6 +680,17 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
     if (onError) {
       onError(errorMsg)
     }
+  }
+
+  const preserveEinoErrorDisplay = (message: ChatMessage, errorMsg: string, engine?: unknown, definition?: unknown) => {
+    let stream = message.agentEventStream as ChatMessage[] | undefined
+    // The server publication manifest owns definition IDs. Render failures for
+    // every versioned Eino timeline instead of duplicating its business list.
+    const versionedError = typeof definition === 'string' && definition.length > 0
+    if (!stream?.some(event => typeof event.definition_version === 'string' && event.definition_version.length > 0) && engine !== 'langflow' && engine !== 'eino' && !versionedError) return
+    if (!stream) { stream = []; message.agentEventStream = stream }
+    stream.forEach(event => { if (event.type === 'thinking' && !event.done) event.done = true })
+    stream.push({ type: 'answer', content: errorMsg, done: true, failed: true })
   }
 
   const handleAgentChunk = (data: ChatMessage) => {
@@ -751,6 +770,9 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
               done: false,
               startTime: Date.now(),
               thinking: true,
+              run_id: dataPayload?.run_id,
+              node_key: dataPayload?.node_key,
+              definition_version: dataPayload?.definition_version,
             }
             stream.push(thinkingEvent)
             if (eventId) eventMap.set(eventId, thinkingEvent)
@@ -1053,6 +1075,7 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
           if (responseType === 'error' && !toolName) {
             const errorMsg = String(data.content || t('chat.processError'))
             message.content = errorMsg
+            preserveEinoErrorDisplay(message, errorMsg, dataPayload.execution_engine, dataPayload.definition_version)
             message.is_completed = true
             isReplying.value = false
             loading.value = false
@@ -1064,6 +1087,7 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
         } else if (responseType === 'error') {
           const errorMsg = String(data.content || t('chat.processError'))
           message.content = errorMsg
+          preserveEinoErrorDisplay(message, errorMsg)
           message.is_completed = true
           isReplying.value = false
           loading.value = false

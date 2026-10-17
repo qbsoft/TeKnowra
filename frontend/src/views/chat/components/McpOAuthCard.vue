@@ -54,6 +54,13 @@ import {
   MCP_OAUTH_CALLBACK_PATH,
 } from '@/api/mcp-service'
 import {
+  MCP_OAUTH_SIGNAL_KEY,
+  claimMcpOAuthResume,
+  mcpOAuthDoneUrl,
+  releaseMcpOAuthResume,
+  watchMcpOAuthPopup,
+} from '@/api/mcpOAuthDone'
+import {
   cancelEmbedMCPOAuth,
   getEmbedMCPOAuthAuthorizeURL,
   getEmbedMCPOAuthStatus,
@@ -105,7 +112,8 @@ const authorizing = ref(false)
 const canceling = ref(false)
 const now = ref(Date.now())
 let clock: number | null = null
-let poll: number | null = null
+let stopPopupWatch: (() => void) | null = null
+let stopResumePoll: (() => void) | null = null
 
 const deadline = computed(() => {
   const base = (props.requestedAt || 0) * 1000
@@ -164,9 +172,48 @@ function formatCountdown(s: number): string {
 }
 
 function stopPoll() {
-  if (poll) {
-    window.clearInterval(poll)
-    poll = null
+  if (stopPopupWatch) {
+    stopPopupWatch()
+    stopPopupWatch = null
+  }
+  if (stopResumePoll) {
+    stopResumePoll()
+    stopResumePoll = null
+  }
+}
+
+// 令牌记上之后就把暂停的对话放开。不看某一次弹窗还在不在：
+// 弹窗跨站时经常像已经关掉，卡片也可能被重新挂上，原来的那次询问就丢了。
+async function resumeIfTokenReady() {
+  if (props.resolved || canceling.value || useEmbedOAuth()) return
+  let ok = false
+  try {
+    ok = await getMCPOAuthStatus(props.serviceId, undefined, sharedAgentScope.value)
+  } catch {
+    return
+  }
+  if (!ok || props.resolved || canceling.value) return
+  if (!claimMcpOAuthResume(props.pendingId)) return
+  try {
+    await resolveMCPOAuth(
+      props.pendingId,
+      { service_id: props.serviceId, decision: 'authorize' },
+      sharedAgentScope.value,
+    )
+    try {
+      await refreshMCPMetadata(props.serviceId)
+    } catch {
+      /* next describe/list will live-fill this user's directory */
+    }
+    markPromptSubmitted(props.pendingId, { authorized: true })
+    MessagePlugin.success(t('agentStream.mcpOAuth.authorizedToast'))
+    authorizing.value = false
+  } catch (e: any) {
+    const msg = e?.response?.data?.error?.message || e?.message || t('agentStream.mcpOAuth.resumeFailed')
+    if (!/already completed|already resolved/i.test(String(msg))) {
+      MessagePlugin.error(msg)
+    }
+    releaseMcpOAuthResume(props.pendingId)
   }
 }
 
@@ -191,6 +238,8 @@ const skip = async () => {
     const msg = e?.response?.data?.error?.message || e?.message || t('agentStream.mcpOAuth.skipFailed')
     MessagePlugin.error(msg)
   } finally {
+    stopPoll()
+    authorizing.value = false
     canceling.value = false
   }
 }
@@ -209,7 +258,11 @@ const authorize = async () => {
   authorizing.value = true
   try {
     const redirectUri = window.location.origin + MCP_OAUTH_CALLBACK_PATH
-    const frontendRedirect = window.location.pathname + window.location.search
+    // 嵌入页仍回到嵌入地址（那边有自己的落脚提示）。平台对话不能把弹窗送回对话本身，
+    // 否则会再开一份对话，原来正在回答的那一页停止往下走。
+    const frontendRedirect = useEmbedOAuth()
+      ? window.location.pathname + window.location.search
+      : mcpOAuthDoneUrl()
     const authorization = useEmbedOAuth()
       ? await getEmbedMCPOAuthAuthorizeURL(
         props.embedChannelId!,
@@ -230,29 +283,31 @@ const authorize = async () => {
       return
     }
     const popup = window.open(authorization.authorizationUrl, 'mcp_oauth', 'width=600,height=720')
-    poll = window.setInterval(async () => {
-      const closed = !popup || popup.closed
-      let ok = false
-      try {
-        ok = useEmbedOAuth()
-          ? await getEmbedMCPOAuthStatus(
-            props.embedChannelId!,
-            props.embedToken!,
-            props.embedSessionId!,
-            props.embedSessionSig!,
-            props.embedVisitorId!,
-            props.serviceId,
-            authorization.authorizationAttempt,
-          )
-          : await getMCPOAuthStatus(props.serviceId, authorization.authorizationAttempt, sharedAgentScope.value)
-      } catch {
-        /* transient; keep polling */
-      }
-      if (ok) {
-        stopPoll()
-        try { popup?.close() } catch { /* cross-origin close may throw */ }
-        try {
-          if (useEmbedOAuth()) {
+    if (!popup) {
+      MessagePlugin.error(t('agentStream.mcpOAuth.startFailed'))
+      authorizing.value = false
+      return
+    }
+    if (stopPopupWatch) {
+      stopPopupWatch()
+      stopPopupWatch = null
+    }
+    stopPopupWatch = watchMcpOAuthPopup(
+      popup,
+      () => useEmbedOAuth()
+        ? getEmbedMCPOAuthStatus(
+          props.embedChannelId!,
+          props.embedToken!,
+          props.embedSessionId!,
+          props.embedSessionSig!,
+          props.embedVisitorId!,
+          props.serviceId,
+          authorization.authorizationAttempt,
+        )
+        : getMCPOAuthStatus(props.serviceId, authorization.authorizationAttempt, sharedAgentScope.value),
+      async () => {
+        if (useEmbedOAuth()) {
+          try {
             await resolveEmbedMCPOAuth(
               props.embedChannelId!,
               props.embedToken!,
@@ -262,26 +317,21 @@ const authorize = async () => {
               props.pendingId,
               { service_id: props.serviceId, decision: 'authorize' },
             )
-          } else {
-            await resolveMCPOAuth(props.pendingId, { service_id: props.serviceId, decision: 'authorize' }, sharedAgentScope.value)
-            try {
-              await refreshMCPMetadata(props.serviceId)
-            } catch {
-              /* next describe/list will live-fill this user's directory */
-            }
+            markPromptSubmitted(props.pendingId, { authorized: true })
+            MessagePlugin.success(t('agentStream.mcpOAuth.authorizedToast'))
+          } catch (e: any) {
+            const msg = e?.response?.data?.error?.message || e?.message || t('agentStream.mcpOAuth.resumeFailed')
+            MessagePlugin.error(msg)
           }
-          markPromptSubmitted(props.pendingId, { authorized: true })
-          MessagePlugin.success(t('agentStream.mcpOAuth.authorizedToast'))
-        } catch (e: any) {
-          const msg = e?.response?.data?.error?.message || e?.message || t('agentStream.mcpOAuth.resumeFailed')
-          MessagePlugin.error(msg)
+          authorizing.value = false
+          return
         }
+        await resumeIfTokenReady()
+      },
+      () => {
         authorizing.value = false
-      } else if (closed) {
-        stopPoll()
-        authorizing.value = false
-      }
-    }, 1500)
+      },
+    )
   } catch (e: any) {
     const msg = e?.response?.data?.error?.message || e?.message || t('agentStream.mcpOAuth.startFailed')
     MessagePlugin.error(msg)
@@ -293,6 +343,17 @@ onMounted(() => {
   clock = window.setInterval(() => {
     now.value = Date.now()
   }, 1000)
+  if (props.resolved || useEmbedOAuth()) return
+  const onStorage = (event: StorageEvent) => {
+    if (event.key === MCP_OAUTH_SIGNAL_KEY) void resumeIfTokenReady()
+  }
+  window.addEventListener('storage', onStorage)
+  const timer = window.setInterval(() => { void resumeIfTokenReady() }, 1500)
+  stopResumePoll = () => {
+    window.clearInterval(timer)
+    window.removeEventListener('storage', onStorage)
+  }
+  void resumeIfTokenReady()
 })
 
 onBeforeUnmount(() => {

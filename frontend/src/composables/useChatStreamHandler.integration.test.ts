@@ -38,6 +38,27 @@ vm.runInNewContext(compiled, {
 })
 const useChatStreamHandler = exports.useChatStreamHandler!
 
+test('stored HTTP refusal replaces optimistic history with exactly the server turns', async () => {
+  const messages: any[] = [
+    { id: 'older-user', role: 'user', content: '同一个问题' },
+    { id: 'older-answer', role: 'assistant', content: '旧答案', is_completed: true },
+    { role: 'user', content: '同一个问题' },
+  ]
+  const handler = useChatStreamHandler({ messagesList: messages,
+    loading: vue.ref(false), isReplying: vue.ref(false), currentAssistantMessageId: vue.ref(''),
+    fullContent: vue.ref(''), isAgentStreamSession: () => true, scrollToBottom() {},
+  })
+  const persisted = [
+    { id: 'older-user', role: 'user', content: '同一个问题', is_completed: true },
+    { id: 'older-answer', role: 'assistant', content: '旧答案', is_completed: true },
+    { id: 'rejected-user', role: 'user', content: '同一个问题', is_completed: true },
+    { id: 'refusal', role: 'assistant', content: '任务未完成：共享智能体授权已撤销', is_completed: true },
+  ]
+  await handler.handleMsgList(persisted, false, undefined, true)
+  assert.deepEqual(messages.map(item => item.id), persisted.map(item => item.id))
+  assert.equal(messages.filter(item => item.role === 'user').length, 2, 'same text in different turns must be preserved')
+})
+
 function setup(t: TestContext, mode: 'ordinary' | 'quick-timeline' | 'agent') {
   const effects = vue.effectScope()
   const oldWindow = (globalThis as any).window
@@ -95,7 +116,7 @@ function setup(t: TestContext, mode: 'ordinary' | 'quick-timeline' | 'agent') {
     handler.processStreamChunk({ id: 'request', response_type, content, done, data })
   }
   return {
-    message, loading, isReplying, currentAssistantMessageId, replies, turns, errors, img, requests, answer, send, revealed,
+    handler, message, loading, isReplying, currentAssistantMessageId, replies, turns, errors, img, requests, answer, send, revealed,
     persist: () => { persisted = true },
     render: () => hydrateProtectedFileImages(root, access()),
     flush: async () => {
@@ -104,6 +125,46 @@ function setup(t: TestContext, mode: 'ordinary' | 'quick-timeline' | 'agent') {
       await new Promise(resolve => setImmediate(resolve))
     },
   }
+}
+
+test('versioned interrupted replay before a timeline stays visible without engine tag', () => {
+  const message = vue.reactive<any>({ id: 'assistant', assistant_message_id: 'assistant', request_id: 'request', role: 'assistant', content: '', is_completed: false, isAgentMode: true })
+  const handler = useChatStreamHandler({ messagesList: [message], loading: vue.ref(true), isReplying: vue.ref(true), currentAssistantMessageId: vue.ref('assistant'), fullContent: vue.ref(''), isAgentStreamSession: () => true, scrollToBottom() {} })
+  handler.processStreamChunk({ id: 'request', response_type: 'error', content: '任务未完成：执行进程已中断，请重新发起。', done: true, data: { stage: 'agent_execution', definition_version: 'fixed-langflow-release' } })
+  assert.ok(message.agentEventStream?.some((entry: any) => entry.type === 'answer' && entry.failed && entry.content.includes('已中断')))
+  handler.processStreamChunk({ id: 'request', response_type: 'complete', content: '', done: true, data: {} })
+  assert.ok(message.content.includes('已中断'))
+})
+
+test('Langflow failure before a versioned timeline stays visible', async t => {
+  const h = setup(t, 'agent')
+  h.persist()
+  h.send('error', '任务未完成：技能已禁用，请检查当前授权。', true, { stage: 'agent_execution', execution_engine: 'langflow' })
+  h.send('complete', '', true, {})
+  assert.ok(h.message.agentEventStream?.some((entry: any) => entry.type === 'answer' && entry.failed && entry.content.includes('技能已禁用')))
+  assert.ok(h.message.content.includes('技能已禁用'))
+})
+
+test('credit Eino failure remains visible when the stream terminates', async t => {
+  const h = setup(t, 'agent')
+  h.persist()
+  h.send('thinking', '读取本人权限内的客户信用', false, { event_id: 'r:credit', definition_version: 'customer-credit-readonly-v1', run_id: 'r', node_key: 'credit' })
+  h.send('error', '任务未完成：执行进程已中断，请重新发起。', true, { stage: 'agent_execution' })
+  h.send('complete', '', true, {})
+  assert.ok(h.message.agentEventStream.some((event: any) => event.type === 'answer' && event.failed && event.content.includes('已中断')))
+  assert.equal(h.isReplying.value, false)
+})
+
+for (const definition of ['knowledge-summary-v1', 'business-review-multiagent-v1']) {
+  test(`${definition}: failure remains visible in the live agent timeline`, async t => {
+    const h = setup(t, 'agent')
+    h.persist()
+    h.send('thinking', '处理当前任务', false, { event_id: 'r:validate', definition_version: definition, run_id: 'r', node_key: 'validate' })
+    h.send('error', '任务未完成：事实复核拒绝发布', true, { stage: 'agent_execution' })
+    h.send('complete', '', true, {})
+    assert.ok(h.message.agentEventStream.some((event: any) => event.type === 'answer' && event.failed && event.content.includes('事实复核拒绝发布')))
+    assert.equal(h.isReplying.value, false)
+  })
 }
 
 for (const mode of ['ordinary', 'quick-timeline', 'agent'] as const) {

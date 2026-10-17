@@ -36,6 +36,7 @@ func RegisterCustomAgentRoutes(r *gin.RouterGroup, agentHandler *handler.CustomA
 		agentsRead.GET("/type-presets", g.Viewer(), agentHandler.GetAgentTypePresets)
 		// List the built-in tools an agent may select — Viewer+
 		agentsRead.GET("/tools", g.Viewer(), agentHandler.GetAgentTools)
+		agentsRead.GET("/execution-catalog", g.Viewer(), agentHandler.GetExecutionCatalog)
 		// Create custom agent — Contributor+
 		agentsWrite.POST("", g.Contributor(), agentHandler.CreateAgent)
 		// List all agents (including built-in) — Viewer+

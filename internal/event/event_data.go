@@ -160,9 +160,12 @@ type AgentCompleteData struct {
 
 // AgentThoughtData represents agent thought streaming data
 type AgentThoughtData struct {
-	Content   string `json:"content"`
-	Iteration int    `json:"iteration"`
-	Done      bool   `json:"done"`
+	RunID             string `json:"run_id,omitempty"`
+	NodeKey           string `json:"node_key,omitempty"`
+	DefinitionVersion string `json:"definition_version,omitempty"`
+	Content           string `json:"content"`
+	Iteration         int    `json:"iteration"`
+	Done              bool   `json:"done"`
 }
 
 // AgentToolCallData represents agent tool call notification data

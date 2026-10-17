@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/agent/einodef"
 	"github.com/Tencent/WeKnora/internal/agent/skills"
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/application/service"
@@ -47,7 +48,9 @@ type AgentStreamHandler struct {
 	// message then stays incomplete and the run is resumed later.
 	suspension *types.PromptSuspension
 
-	eventBus *event.EventBus
+	eventBus              *event.EventBus
+	einoDefinitionVersion string
+	langflowExecution     bool
 
 	// artifactCollector drains skill-generated files from the session
 	// sandbox after the agent completes. Nil when the sandbox backend
@@ -215,9 +218,34 @@ func (h *AgentStreamHandler) handleThought(ctx context.Context, evt event.Event)
 			"event_id": evt.ID,
 		}
 	}
+	if data.DefinitionVersion != "" && h.assistantMessage != nil {
+		found := false
+		for i := range h.assistantMessage.AgentSteps {
+			step := &h.assistantMessage.AgentSteps[i]
+			if step.RunID == data.RunID && step.NodeKey == data.NodeKey {
+				found = true
+				if data.Content != "" {
+					step.Thought = data.Content
+				}
+				break
+			}
+		}
+		if !found {
+			h.assistantMessage.AgentSteps = append(h.assistantMessage.AgentSteps, types.AgentStep{Iteration: data.Iteration, Thought: data.Content, Timestamp: time.Now(), RunID: data.RunID, NodeKey: data.NodeKey, DefinitionVersion: data.DefinitionVersion})
+		}
+	}
 
 	h.mu.Unlock()
 
+	if data.RunID != "" {
+		metadata["run_id"] = data.RunID
+	}
+	if data.NodeKey != "" {
+		metadata["node_key"] = data.NodeKey
+	}
+	if data.DefinitionVersion != "" {
+		metadata["definition_version"] = data.DefinitionVersion
+	}
 	// Append this chunk to stream (no accumulation - frontend will accumulate)
 	if err := h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
 		ID:        evt.ID,
@@ -660,11 +688,58 @@ func (h *AgentStreamHandler) handleError(ctx context.Context, evt event.Event) e
 	if !ok {
 		return nil
 	}
+	// Page-created agents may fail before a first draft exists. The execution
+	// engine marker comes from the saved Agent, never from user chat text.
+	if data.Extra["execution_engine"] == "langflow" {
+		h.langflowExecution = true
+	}
+	definition, _ := data.Extra["definition_version"].(string)
+	if definition == "" {
+		definition = h.einoDefinitionVersion
+	}
+	_, isEino := einodef.Lookup(definition)
+	if (isEino || h.langflowExecution) && h.assistantMessage != nil {
+		h.mu.Lock()
+		// This entry also handles failures before an engine was constructed.
+		if ds, ok := data.Extra["execution_diagnostics"].([]types.ExecutionDiagnostic); !ok || len(ds) == 0 {
+			engine := "eino"
+			if h.langflowExecution {
+				engine = "langflow"
+			}
+			d := types.NewExecutionDiagnostic(engine, data.Stage, types.ExecutionFailureCode(fmt.Errorf("%s", data.Error)), nil)
+			d.Definition = definition
+			h.assistantMessage.ExecutionContext.ExecutionDiagnostics = []types.ExecutionDiagnostic{d}
+		}
+		prefix := "任务未完成："
+		if definition == einodef.ContractReview {
+			prefix = "审查未完成："
+		}
+		if h.langflowExecution {
+			data.Error = langflowFailureMessage(data.Error)
+		}
+		h.assistantMessage.Content = prefix + data.Error
+		data.Error = h.assistantMessage.Content
+		if steps, ok := data.Extra["agent_steps"].([]types.AgentStep); ok {
+			h.assistantMessage.AgentSteps = agenttools.SanitizeAgentStepsForStorage(steps)
+		}
+		if ds, ok := data.Extra["execution_diagnostics"].([]types.ExecutionDiagnostic); ok && len(ds) > 0 {
+			h.assistantMessage.ExecutionContext.ExecutionDiagnostics = ds
+		}
+		h.mu.Unlock()
+		// Cancellation already has a stop event. Persist the failure for reload
+		// without trying to append an error to the cancelled live stream.
+		if h.ctx.Err() != nil {
+			return nil
+		}
+	}
 
 	// Build error metadata
 	metadata := map[string]interface{}{
 		"stage": data.Stage,
 		"error": data.Error,
+	}
+	if h.langflowExecution {
+		metadata["execution_engine"] = "langflow"
 	}
 
 	// Append error event to stream

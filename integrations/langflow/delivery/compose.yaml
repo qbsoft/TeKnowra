@@ -1,0 +1,71 @@
+{
+  "services": {
+    "app": {
+      "image": "${TEKNOWRA_APP_IMAGE:?immutable app image digest required}",
+      "env_file": "${APP_ENV_FILE:?external platform environment required}",
+      "environment": {
+        "TEKNOWRA_LANGFLOW_URL": "http://127.0.0.1:7861",
+        "TEKNOWRA_LANGFLOW_LOCAL_TEST": "false",
+        "TEKNOWRA_LANGFLOW_COMPONENTS_ROOT": "/opt/teknowra-langflow",
+        "TEKNOWRA_LANGFLOW_LIBRARY_ROOT": "/opt/langflow-profile",
+        "TEKNOWRA_LANGFLOW_BINDINGS_FILE": "/run/teknowra-bindings/bindings.json",
+        "TEKNOWRA_LANGFLOW_RELEASES_FILE": "/var/lib/teknowra-langflow/releases.json",
+        "TEKNOWRA_LANGFLOW_CREDENTIALS_FILE": "/run/teknowra-credentials/service.json"
+      },
+      "volumes": [
+        "${COMPONENT_DIR:?verified payload required}:/opt/teknowra-langflow:ro",
+        "${PROFILE_DIR:?matching runtime image profile required}:/opt/langflow-profile:ro",
+        "${BINDINGS_DIR:?external bindings directory required}:/run/teknowra-bindings:ro",
+        "${SERVICE_CREDENTIALS_DIR:?external service credentials required}:/run/teknowra-credentials:ro",
+        "${APP_RELEASE_STATE_DIR:?dedicated release state required}:/var/lib/teknowra-langflow"
+      ],
+      "ports": [
+        "127.0.0.1:${APP_TEST_PORT:-18080}:8080",
+        "127.0.0.1:${LANGFLOW_EDITOR_PORT:-17861}:7861"
+      ],
+      "healthcheck": {
+        "test": ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/health"],
+        "interval": "3s",
+        "timeout": "3s",
+        "start_period": "30s",
+        "retries": 30
+      },
+      "restart": "unless-stopped",
+      "mem_limit": "1536m"
+    },
+    "langflow": {
+      "image": "${LANGFLOW_IMAGE:?immutable Langflow image digest required}",
+      "network_mode": "service:app",
+      "depends_on": {
+        "app": {"condition": "service_healthy"}
+      },
+      "command": [
+        "langflow",
+        "run",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "7861"
+      ],
+      "env_file": "${LANGFLOW_ENV_FILE:?external Langflow-only bootstrap configuration required}",
+      "environment": {
+        "LANGFLOW_COMPONENTS_PATH": "/opt/teknowra-langflow/components",
+        "PYTHONPATH": "/opt/teknowra-langflow",
+        "LANGFLOW_AUTO_LOGIN": "false",
+        "LANGFLOW_ENABLE_SIGNUP": "false",
+        "LANGFLOW_STORE_ENVIRONMENT_VARIABLES": "false",
+        "LANGFLOW_DO_NOT_TRACK": "true",
+        "DO_NOT_TRACK": "true",
+        "LANGFLOW_WORKERS": "1",
+        "LANGFLOW_DATABASE_URL": "sqlite:////var/lib/langflow/langflow.db",
+        "LANGFLOW_CONFIG_DIR": "/var/lib/langflow"
+      },
+      "volumes": [
+        "${COMPONENT_DIR:?verified payload required}:/opt/teknowra-langflow:ro",
+        "${LANGFLOW_STATE_DIR:?dedicated Langflow state required}:/var/lib/langflow"
+      ],
+      "restart": "unless-stopped",
+      "mem_limit": "3072m"
+    }
+  }
+}

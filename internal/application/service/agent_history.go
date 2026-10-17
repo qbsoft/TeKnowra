@@ -76,6 +76,10 @@ func LoadAgentHistory(
 	tokenBudget int,
 	retainRetrievalHistory bool,
 ) ([]chat.Message, float64, error) {
+	return loadAgentHistory(ctx, messageRepo, sessionID, tokenBudget, retainRetrievalHistory, false)
+}
+
+func loadAgentHistory(ctx context.Context, messageRepo interfaces.MessageRepository, sessionID string, tokenBudget int, retainRetrievalHistory, textOnly bool) ([]chat.Message, float64, error) {
 	if tokenBudget <= 0 {
 		return []chat.Message{}, 0, nil
 	}
@@ -84,7 +88,10 @@ func LoadAgentHistory(
 		return nil, 0, fmt.Errorf("load agent history: %w", err)
 	}
 
-	checkpoint := loadContextCheckpoint(ctx, messageRepo, sessionID)
+	var checkpoint *types.Message
+	if !textOnly {
+		checkpoint = loadContextCheckpoint(ctx, messageRepo, sessionID)
+	}
 	out := []chat.Message{}
 	if checkpoint != nil {
 		out = append(out, compaction.SummaryMessage(checkpoint.ContextCheckpoint.Summary))
@@ -105,6 +112,7 @@ func LoadAgentHistory(
 		replay       = newHistoryReplay(estimator, 0, retainRetrievalHistory)
 	)
 	replay.locale = types.LanguageFromContextOrDefault(ctx)
+	replay.textOnly = textOnly
 	for len(rows) < agentHistoryMaxRows {
 		page, err := messageRepo.ListMessagesBySessionBeforeCursor(
 			ctx, sessionID, before, beforeID, agentHistoryPageSize,
@@ -257,6 +265,7 @@ func sortsAtOrBefore(msg, boundary *types.Message) bool {
 // historyReplay builds and prices each turn's replayed messages once, however
 // many pages the read takes.
 type historyReplay struct {
+	textOnly               bool
 	estimator              *agenttoken.Estimator
 	budget                 int
 	retainRetrievalHistory bool
@@ -307,8 +316,12 @@ func (r *historyReplay) messages(t *agentHistoryTurn) []chat.Message {
 	for i, u := range t.users {
 		users[i] = r.stored(u)
 	}
-	msgs := append([]chat.Message{r.openingUserMessage(users[0])},
-		buildTurnBodyMessages(r.stored(t.assistant), users[1:])...)
+	var msgs []chat.Message
+	if r.textOnly {
+		msgs = buildTextTurnMessages(r.stored(t.assistant), users)
+	} else {
+		msgs = append([]chat.Message{r.openingUserMessage(users[0])}, buildTurnBodyMessages(r.stored(t.assistant), users[1:])...)
+	}
 	for i := range msgs {
 		msgs[i].TurnID = id
 	}

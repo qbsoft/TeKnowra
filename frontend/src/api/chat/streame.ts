@@ -41,6 +41,7 @@ export function useStream() {
   const isStreaming = ref(false)      // 流状态
   const isLoading = ref(false)        // 初始加载
   const error = ref<string | null>(null)// 错误信息
+  const persistedFailure = ref<{ sessionId: string; messageId: string } | null>(null)
   const lastStreamRequest = ref<StreamRequestMeta | null>(null)
   let controller = new AbortController()
   let streamGeneration = 0
@@ -56,6 +57,7 @@ export function useStream() {
     // 重置状态
     output.value = '';
     error.value = null;
+    persistedFailure.value = null;
     isStreaming.value = true;
     isLoading.value = true;
 
@@ -204,7 +206,19 @@ export function useStream() {
         onopen: async (res) => {
           // 401 is recoverable (refresh + replay); everything else is not.
           if (res.status === 401) throw new StreamAuthError(res.status);
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          if (!res.ok) {
+            // Only a server-confirmed stored turn should trigger a history reload.
+            // Do not render arbitrary error details or infer persistence from 404.
+            try {
+              const details = (await res.json())?.error?.details;
+              if (myGeneration === streamGeneration && details?.persisted_failure === true &&
+                  details.session_id === params.session_id &&
+                  typeof details.assistant_message_id === 'string' && details.assistant_message_id) {
+                persistedFailure.value = { sessionId: details.session_id, messageId: details.assistant_message_id };
+              }
+            } catch { /* A non-JSON HTTP failure has no persisted-turn metadata. */ }
+            throw new Error(`HTTP ${res.status}`);
+          }
           console.log(`[TTFB] response:headers request_id=${requestID} elapsed_ms=${(performance.now() - sentAt).toFixed(1)}`);
           isLoading.value = false;
         },
@@ -286,6 +300,7 @@ export function useStream() {
     isStreaming,     // 是否在流式传输中
     isLoading,       // 初始连接状态
     error,
+    persistedFailure,
     lastStreamRequest,
     onChunk,
     startStream,     // 启动流

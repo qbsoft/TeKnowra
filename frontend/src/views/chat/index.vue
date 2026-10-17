@@ -138,6 +138,7 @@
                                 </botmsg>
                                 <FollowUpSuggestions v-if="session.answerFullyRendered && !session.steerForked && !session.suggestionsDismissed"
                                     :suggestion-set="session.suggestionSet"
+                                :asked-questions="messagesList.slice(0, index).filter(m => m.role === 'user').map(m => m.content || '')"
                                     :loading="session.suggestionLoading"
                                     :allow-regenerate="session.suggestionSet?.allow_regenerate"
                                     @select="(item) => handleFollowUpSelect(session, item)"
@@ -294,7 +295,7 @@ const { t } = useI18n();
 const { firstQuery, firstMentionedItems, firstModelId, firstImageFiles, firstAttachmentFiles, firstQuestionOrigin } = storeToRefs(usemenuStore);
 // Capture before the initial send consumes firstQuery; the child focuses after mounting.
 const focusComposerOnMount = Boolean(props.embeddedMode ? props.initialQuery : firstQuery.value);
-const { onChunk, error, isStreaming, startStream, stopStream, lastStreamRequest } = useStream();
+const { onChunk, error, persistedFailure, isStreaming, startStream, stopStream, lastStreamRequest } = useStream();
 /** Snapshot of the in-flight HTTP request for attaching to the next assistant message. */
 const pendingStreamDebug = ref(null);
 
@@ -1048,7 +1049,7 @@ const showGlobalTypingIndicator = computed(() =>
     shouldShowGlobalTypingIndicator(messagesList, loading.value, isImRecovering.value),
 );
 
-const getmsgList = (data, isScrollType = false, scrollHeight) => {
+const getmsgList = (data, isScrollType = false, scrollHeight = undefined, replaceHistory = false) => {
     if (isScrollType) {
         if (historyLoadingMore.value || !hasMoreHistory.value) return;
         historyLoadingMore.value = true;
@@ -1072,11 +1073,13 @@ const getmsgList = (data, isScrollType = false, scrollHeight) => {
             hasMoreHistory.value = false;
             return;
         }
-        if (batch.length < limit.value) {
+        if (replaceHistory) {
+            hasMoreHistory.value = batch.length >= limit.value;
+        } else if (batch.length < limit.value) {
             hasMoreHistory.value = false;
         }
         created_at.value = nextCursor;
-        await handleMsgList(batch, isScrollType, scrollHeight);
+        await handleMsgList(batch, isScrollType, scrollHeight, replaceHistory);
     }).catch((err) => {
         console.error('Failed to load messages:', err);
         if (isScrollType) {
@@ -1675,9 +1678,10 @@ const resumeSuspendedRun = async (pendingId) => {
 };
 provide(resumeSuspendedRunKey, resumeSuspendedRun);
 
-watch(error, (newError) => {
+watch(error, async (newError) => {
     if (!newError) return;
     if (attachingResumedRun) return;
+    const failedSession = session_id.value;
     // A failed attach to an in-flight IM reply isn't a real error — the answer is
     // produced on the IM side and never streams here. Recover quietly by polling to
     // completion instead of flashing a "stream failed" toast. Web/api replies fall
@@ -1688,10 +1692,15 @@ watch(error, (newError) => {
         return;
     }
     MessagePlugin.error(newError);
-    isReplying.value = false;
-    loading.value = false;
     // 清空当前 assistant message ID
     currentAssistantMessageId.value = '';
+    const storedFailure = persistedFailure.value;
+    if (storedFailure && storedFailure.sessionId === session_id.value) {
+        await getmsgList({ session_id: storedFailure.sessionId, limit: limit.value, created_at: '' }, false, undefined, true);
+    }
+    if (session_id.value !== failedSession) return;
+    isReplying.value = false;
+    loading.value = false;
 });
 
 onChunk((data) => {

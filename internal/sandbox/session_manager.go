@@ -308,7 +308,9 @@ func (m *SessionBoundManager) Execute(ctx context.Context, cfg *ExecuteConfig) (
 	if err != nil {
 		return nil, err
 	}
-	if err := m.ensureSessionWorkspaceDirs(ctx, handle, executionOutputDir(cfg)); err != nil {
+	handle, err = m.prepareResolvedSessionDirs(ctx, cfg.SessionID, handle, true,
+		DefaultSandboxExecUser, SessionInputRoot, executionOutputDir(cfg))
+	if err != nil {
 		return nil, err
 	}
 	return m.ephemeral.ExecuteOnHandle(ctx, handle, cfg)
@@ -321,6 +323,34 @@ func (m *SessionBoundManager) ensureSessionWorkspaceDirs(
 	ctx context.Context, handle RemoteSandboxHandle, outputDir string,
 ) error {
 	return m.prepareSessionDirs(ctx, handle, DefaultSandboxExecUser, SessionInputRoot, outputDir)
+}
+
+// prepareResolvedSessionDirs may rebind once only while preparing directories:
+// no business command has started. Never retry an actual command, an ambiguous
+// transport error, permissions failure, or an operation pinned to a sandbox ID.
+func (m *SessionBoundManager) prepareResolvedSessionDirs(
+	ctx context.Context, sessionID string, handle RemoteSandboxHandle,
+	allowReplacement bool, user string, dirs ...string,
+) (RemoteSandboxHandle, error) {
+	err := m.prepareSessionDirs(ctx, handle, user, dirs...)
+	if err == nil {
+		return handle, nil
+	}
+	if !allowReplacement || m.client.Provider() != SandboxTypeDocker ||
+		!CanReplaceRemoteBinding(err) || ctx.Err() != nil {
+		return nil, err
+	}
+	// Resolve rechecks the session and compare-and-swaps the missing binding;
+	// it does not delete a still-live sandbox or bypass tenant/turn checks.
+	log.Printf("[sandbox] session %s lost Docker sandbox %s before command start; resolving once", sessionID, handle.ID())
+	handle, err = m.resolveSession(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.prepareSessionDirs(ctx, handle, user, dirs...); err != nil {
+		return nil, err
+	}
+	return handle, nil
 }
 
 // prepareSessionDirs never renames or deletes existing data to "repair" access.
@@ -849,6 +879,7 @@ func (m *SessionBoundManager) execShellCommandWithOutputSnapshot(
 			return nil, nil, err
 		}
 	}
+	snapshotHandleID := handle.ID()
 	var snapshot *ShellOutputSnapshot
 	if outputDir != "" {
 		if before, err := m.snapshotOutputFiles(ctx, handle, outputDir); err == nil {
@@ -860,18 +891,23 @@ func (m *SessionBoundManager) execShellCommandWithOutputSnapshot(
 		user = "root"
 	}
 	if !opts.SkipWorkspacePrep {
+		dirs := []string{SessionInputRoot, SessionOutputRoot, workDir}
 		if opts.AsRoot {
 			// Installation owns the skill directory and does not depend on a
 			// writable session workspace (which is cleaned before snapshotting).
-			if err := m.prepareSessionDirs(ctx, handle, user, workDir); err != nil {
-				return nil, nil, err
-			}
-		} else {
-			if err := m.prepareSessionDirs(
-				ctx, handle, user, SessionInputRoot, SessionOutputRoot, workDir,
-			); err != nil {
-				return nil, nil, err
-			}
+			dirs = []string{workDir}
+		}
+		handle, err = m.prepareResolvedSessionDirs(ctx, sessionID, handle,
+			opts.ExpectedSandboxID == "" && !opts.AsRoot, user, dirs...)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	// A replacement must not inherit an output snapshot from the old handle.
+	if outputDir != "" && handle.ID() != snapshotHandleID {
+		snapshot = nil
+		if before, err := m.snapshotOutputFiles(ctx, handle, outputDir); err == nil {
+			snapshot = &ShellOutputSnapshot{Before: before}
 		}
 	}
 

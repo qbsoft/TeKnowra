@@ -254,8 +254,8 @@
             <div class="action-card">
               <div class="action-header no-results">
                 <div class="action-title">
-                  <t-icon class="action-title-icon" name="check-circle" />
-                  <span class="action-name">{{ t('common.finish') }}</span>
+                  <t-icon class="action-title-icon" :name="einoReviewFailed ? 'error-circle' : 'check-circle'" />
+                  <span class="action-name">{{ einoReviewFailed ? t('common.failed') : t('common.finish') }}</span>
                 </div>
               </div>
             </div>
@@ -1608,6 +1608,9 @@ watch(eventStream, (stream) => {
 const isConversationDone = computed(
   () => isAssistantTurnComplete(props.session) && !isAwaitingInput(props.session),
 );
+const einoReviewFailed = computed(() => eventStream.value.some((e: any) => e.failed) ||
+  (eventStream.value.some((e: any) => e.definition_version === 'contract-review-v1' || e.definition_version === 'customer-credit-readonly-v1') &&
+    /^(审查|任务)未完成：/.test(String(props.session?.content || ''))));
 const isSegmentDone = computed(() => Boolean(props.session?.steerForked) || isConversationDone.value);
 
 const streamingMermaidSvgCache = ref<string[]>([]);
@@ -1958,7 +1961,7 @@ const buildFullEventList = (stream: any[]) => {
     // Merge consecutive thinking-like events
     if (isThinkingLikeEvent(event) && result.length > 0) {
       const prev = result[result.length - 1];
-      if (isThinkingLikeEvent(prev)) {
+      if (isThinkingLikeEvent(prev) && !prev.node_key && !event.node_key) {
         const prevContent = prev._mergedContent || getThinkingContent(prev);
         const curContent = getThinkingContent(event);
 

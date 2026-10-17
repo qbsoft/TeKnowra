@@ -10,6 +10,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useSettingsStore } from '@/stores/settings'
 import { getCurrentUser, userInfoFromApi } from '@/api/auth'
 import { consumePendingTenantSwitchToast } from '@/utils/tenantSwitch'
+import { mcpOAuthLanding, signalMcpOAuthLanding } from '@/api/mcpOAuthDone'
 import { useRoleLabel } from '@/composables/useRoleLabel'
 import { notifyLoginSuccess } from '@/utils/loginNotify'
 import { renderWorkspaceNotifyContent } from '@/utils/workspaceNotifyContent'
@@ -241,6 +242,16 @@ const showPendingTenantSwitchToast = () => {
 }
 
 onMounted(() => {
+  // 授权弹窗如果仍被送回对话页，不要留在这份新打开的对话上：通知原来的页面并关掉自己。
+  const oauthLanding = mcpOAuthLanding(window.location.hash)
+  if (oauthLanding && window.opener) {
+    signalMcpOAuthLanding(oauthLanding)
+    const bare = window.location.pathname + window.location.search
+    history.replaceState(null, '', bare)
+    window.setTimeout(() => { try { window.close() } catch { /* 留在这一页也只是落脚 */ } }, 300)
+    return
+  }
+
   handleGlobalOIDCCallback()
   showPendingTenantSwitchToast()
 

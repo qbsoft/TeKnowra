@@ -119,6 +119,18 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 		c.Error(errors.NewInternalServerError(fmt.Sprintf("Failed to get stream data: %s", err.Error())))
 		return
 	}
+	ended, err := h.finishAbandonedEinoRun(ctx, message, events)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("无法核实任务执行状态，请稍后重试。"))
+		return
+	}
+	if ended {
+		events, currentOffset, err = h.streamManager.GetEvents(ctx, sessionID, messageID, 0)
+		if err != nil {
+			c.Error(errors.NewInternalServerError("无法读取任务中断记录，请重新打开会话。"))
+			return
+		}
+	}
 
 	if len(events) == 0 {
 		logger.Warnf(ctx, "No events found in stream, session ID: %s, message ID: %s", sessionID, messageID)
@@ -138,7 +150,7 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 	setSSEHeaders(c)
 
 	// Check if stream is already completed
-	streamCompleted := false
+	streamCompleted := message.IsCompleted
 	for _, evt := range events {
 		if evt.Type == "complete" {
 			streamCompleted = true

@@ -85,7 +85,7 @@ export const markdownDomPurifyConfig = {
     'clippath', 'lineargradient', 'radialgradient', 'stop', 'pattern',
     'image', 'foreignobject', 'desc', 'title', 'switch', 'symbol', 'mask',
     'math', 'annotation', 'semantics', 'mo', 'mi', 'mn', 'msup', 'mrow', 'mfrac', 'msqrt', 'mroot', 'mstyle',
-    'button',
+    'button', 'details', 'summary',
   ],
   ALLOWED_ATTR: [
     'href', 'title', 'target', 'rel', 'data-tooltip', 'data-url', 'data-kb-id',

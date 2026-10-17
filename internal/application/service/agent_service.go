@@ -130,6 +130,7 @@ type agentService struct {
 	hostSkillsRoot        string
 	hostSkillVersionsRoot string
 	agentCronManager      interfaces.AgentCronManager
+	agentShareService     interfaces.AgentShareService
 }
 
 // NewAgentService creates a new agent service
@@ -163,6 +164,7 @@ func NewAgentService(
 	graphRepo interfaces.RetrieveGraphRepository,
 	operationDispatcher *operations.HandlerDispatcher,
 	customAgentService interfaces.CustomAgentService,
+	agentShareService interfaces.AgentShareService,
 ) interfaces.AgentService {
 	svc := &agentService{
 		customAgentService:   customAgentService,
@@ -170,6 +172,7 @@ func NewAgentService(
 		browserSkill:         browserSkill,
 		userRepo:             userRepo,
 		graphRepo:            graphRepo,
+		agentShareService:    agentShareService,
 		cfg:                  cfg,
 		modelService:         modelService,
 		knowledgeBaseService: knowledgeBaseService,
@@ -223,6 +226,15 @@ func (s *agentService) CreateAgentEngine(
 	}
 	if chatModel == nil {
 		return nil, fmt.Errorf("chat model is nil after initialization")
+	}
+	if binding, enabled := s.cfg.LangflowBinding(config.AgentID); enabled {
+		return s.createLangflowEngine(ctx, binding, config, chatModel, rerankModel, eventBus, sessionID, assistantMessageID)
+	}
+	if config.ExecutionEngine == "langflow" {
+		return nil, fmt.Errorf("Langflow流程尚未接入或发布，请先在智能体页面完成配置")
+	}
+	if _, enabled := s.cfg.EinoDefinitionForAgent(config); enabled || config.ExecutionEngine == "eino" {
+		return s.createEinoEngine(ctx, config, chatModel, rerankModel, eventBus, sessionID)
 	}
 
 	if config.LocalBrowserEnabled && (!s.browserSkill.Enabled() || config.SkillInstallMode()) {

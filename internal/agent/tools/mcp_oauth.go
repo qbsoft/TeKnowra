@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/agent/approval"
+	"github.com/Tencent/WeKnora/internal/agent/runbudget"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/mcp"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -95,20 +96,20 @@ func getOrCreateMCPClientWithOAuthRetry(
 	gate approval.MCPApproval,
 	oauthSess *MCPOAuthSession,
 	mcpToolName, toolCallID string,
-) (mcp.MCPClient, error) {
+) (mcp.MCPClient, context.Context, context.CancelFunc, error) {
+	noop := func() {}
 	client, err := mcpManager.GetOrCreateClient(ctx, service)
 	if err == nil {
-		return client, nil
+		return client, ctx, noop, nil
 	}
 	if oauthSess == nil {
-		return nil, err
+		return nil, ctx, noop, err
 	}
 
 	retryCtx, cancel, ok := waitForMCPOAuthAuthorization(ctx, gate, oauthSess, service, mcpToolName, toolCallID, err)
 	if !ok {
-		return nil, err
+		return nil, ctx, noop, err
 	}
-	defer cancel()
 
 	// The callback that completed the authorization may have been handled by
 	// another replica, so this one recycles its own connections: this user's,
@@ -118,7 +119,10 @@ func getOrCreateMCPClientWithOAuthRetry(
 	_ = mcpManager.CloseClientsAfterAuthorization(
 		retryCtx, tenantID, service.ID, types.MCPOAuthPrincipalFromContext(retryCtx),
 	)
-	return mcpManager.GetOrCreateClient(retryCtx, service)
+	// The caller owns this context until CallTool/ListTools has finished.
+	// Canceling it here or returning only the client loses the renewed window.
+	client, err = mcpManager.GetOrCreateClient(retryCtx, service)
+	return client, retryCtx, cancel, err
 }
 
 func waitForMCPOAuthAuthorization(
@@ -164,6 +168,10 @@ func waitForMCPOAuthAuthorization(
 		return ctx, noop, false
 	}
 
+	resume, pauseErr := runbudget.Pause(waitCtx)
+	if pauseErr != nil {
+		return ctx, noop, false
+	}
 	decision, waitErr := ow.RequestOAuthAndWait(waitCtx, approval.OAuthPendingRequest{
 		// The user answers from their own workspace, which differs from
 		// tenantID (the agent's) when the agent is shared.
@@ -179,6 +187,7 @@ func waitForMCPOAuthAuthorization(
 		ToolCallID:         toolCallID,
 		WaitTimeout:        oauthWaitTimeout(sess),
 	})
+	resume()
 	if waitErr != nil || !decision.Approved {
 		return ctx, noop, false
 	}

@@ -393,6 +393,15 @@ func (s *messageService) IndexMessageToKB(ctx context.Context, userQuery string,
 		return
 	}
 
+	tenantID, ok := sessionTenantIDForLookup(ctx)
+	if !ok {
+		return
+	}
+	disabled, policyErr := s.SessionChatHistoryIndexingDisabled(ctx, tenantID, sessionID)
+	if policyErr != nil || disabled {
+		logger.Info(ctx, "Skipping chat history index: session policy disabled or unavailable")
+		return
+	}
 	logger.Infof(ctx, "Indexing message to chat history KB %s, message ID: %s, session ID: %s", cfg.KnowledgeBaseID, messageID, sessionID)
 
 	// Build passage content: combine Q&A for better semantic search

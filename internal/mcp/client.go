@@ -845,11 +845,14 @@ func (c *mcpGoClient) CallTool(ctx context.Context, name string, args map[string
 		return nil, fmt.Errorf("failed to call tool: %w", err)
 	}
 
-	return &CallToolResult{
-		IsError:           result.IsError,
-		Content:           toolContentItems(result.Content),
-		StructuredContent: result.StructuredContent,
-	}, nil
+	if result == nil {
+		return nil, fmt.Errorf("MCP returned no tool result")
+	}
+	return convertCallToolResult(result), nil
+}
+
+func convertCallToolResult(result *mcp.CallToolResult) *CallToolResult {
+	return &CallToolResult{IsError: result.IsError, Content: toolContentItems(result.Content), StructuredContent: result.StructuredContent}
 }
 
 // toolContentItems converts the content of a tool result. Besides text and

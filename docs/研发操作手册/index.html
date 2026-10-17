@@ -1,5 +1,5 @@
 <!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TeKnowra 企业 Agent 研发操作手册</title><style>*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:#f3f6fa;color:#203247;font:16px/1.85 "Microsoft YaHei","PingFang SC",sans-serif}main{max-width:1180px;margin:32px auto;background:#fff;padding:48px 60px;border-radius:14px;box-shadow:0 4px 30px #2032470c}h1{font-size:32px;line-height:1.4;color:#153958}h2{font-size:25px;border-bottom:2px solid #dce9f3;padding-top:30px;padding-bottom:10px}h3{font-size:20px;padding-top:12px}p,li{overflow-wrap:anywhere}a{color:#1765a3;text-decoration:none}a:hover{text-decoration:underline}img{display:block;max-width:100%;height:auto;margin:24px auto;border:1px solid #e0e7ee;border-radius:8px}table{border-collapse:collapse;width:100%;font-size:14px;margin:22px 0}th,td{border:1px solid #d9e3ed;padding:10px 12px;text-align:left;vertical-align:top}th{background:#edf4fb}tr:nth-child(even){background:#fafcfe}code{font-family:Consolas,"Microsoft YaHei",monospace;background:#eef2f6;font-size:.9em;padding:2px 5px;border-radius:3px}pre{background:#162b3e;color:#e7f0f9;padding:20px;overflow:auto;border-radius:8px;line-height:1.65}pre code{background:none;color:inherit;padding:0;font-size:13px;white-space:pre}.toc{background:#f3f8fc;border:1px solid #d6e7f4;border-radius:8px;padding:20px 30px;margin:30px 0}.toc ul{margin:0;padding-left:23px}.toctitle{font-weight:bold;font-size:19px}strong{color:#174e73}.readnote{color:#5c6c7d;font-size:13px}.top{position:fixed;bottom:18px;right:18px;background:#1765a3;color:white;padding:8px 16px;border-radius:20px} @media(max-width:800px){main{margin:0;padding:24px 18px;border-radius:0}table{display:block;overflow-x:auto}h1{font-size:26px}}@media print{body{background:white}main{margin:0;max-width:none;box-shadow:none;padding:0}.toc{break-after:page}h2,h3{break-after:avoid}img,tr,pre{break-inside:avoid}.top{display:none}}</style></head><body><main id="top"><p class="readnote">本地离线阅读版 · 2026-10-17 · 原文 README.md · 无外部脚本或在线资源</p><h1 id="teknowra-agent">TeKnowra 企业 Agent 研发操作手册</h1>
-<p>版本：1.4 · 核实日期：2026-10-17 · 适用范围：当前本机 TeKnowra fork、Langflow 和 Eino 双引擎接入。</p>
+<p>版本：1.5 · 核实日期：2026-10-17 · 适用范围：当前本机 TeKnowra fork、Langflow 和 Eino 双引擎接入。</p>
 <p>本手册帮助研发把企业需求做成可配置、可发布、可追溯的 Agent。管理员先准备身份、工作空间、模型和系统连接；研发配置流程、资源与业务规则；业务人员在 TeKnowra 聊天中使用并按自身权限授权。<strong>Langflow 是新建默认引擎，Eino 按已有代码场景选用。</strong></p>
 <p>本手册编写与登录核实没有修改产品代码或发布版本，没有上线，也没有生成交付包。后续按用户明确要求，仅通过官方自助改密接口调整了本机编辑账号密码并同步已有受限存储；未改服务密钥或账号权限。本文中的创建、授权、发布和业务执行命令供研发后续操作，不表示已执行这些动作。</p>
 <p>阅读版见同目录 <code>index.html</code>；截图、架构图在 <code>images/</code>。本机路径可按客户环境调整，账号、密钥及连接配置应由管理员通过受控渠道提供，不填写到本手册或流程画布。</p>
@@ -42,6 +42,7 @@
 <li><a href="#63">6.3 新服务的配置与启动</a></li>
 <li><a href="#64-teknowra">6.4 在 TeKnowra 注册和分配工具</a></li>
 <li><a href="#65">6.5 聊天授权与同任务恢复</a></li>
+<li><a href="#66-crm">6.6 现有 CRM 工具按什么职责使用</a></li>
 </ul>
 </li>
 <li><a href="#7-wren">7. 用 Wren 技能建立业务语义模型</a><ul>
@@ -54,6 +55,7 @@
 <li><a href="#77">7.7 第五步：权限模型与安全查询链</a></li>
 <li><a href="#78">7.8 第六步：校验、业务核对与问数接入</a></li>
 <li><a href="#79-wren-board">7.9 wren-board 怎么给业务审定</a></li>
+<li><a href="#710-dowhy">7.10 用 DoWhy 分析经营机制</a></li>
 </ul>
 </li>
 <li><a href="#8-agent">8. 共享 Agent 与员工使用</a></li>
@@ -76,6 +78,7 @@
 <li><a href="#123">12.3 研发开工模板</a></li>
 <li><a href="#124">12.4 截图与核实范围</a></li>
 <li><a href="#125">12.5 本轮配置截图核对结果</a></li>
+<li><a href="#126">12.6 实现与操作说明覆盖检查</a></li>
 </ul>
 </li>
 </ul>
@@ -201,11 +204,11 @@
 <tbody>
 <tr>
 <td>平台源码</td>
-<td><code>D:/TeKnowra/repo</code>，Git main</td>
+<td><code>D:/TeKnowra/repo</code>；默认分支 main，本轮工作分支 <code>cursor/mcp-oauth-return-to-current-page</code></td>
 </tr>
 <tr>
 <td>MCP 源码</td>
-<td><code>D:/TeKnowra/tyer-mcp-server</code>，Git master</td>
+<td><code>D:/TeKnowra/tyer-mcp-server</code>；默认分支 master，本轮工作分支 <code>tyer/agent-infrastructure-20261017</code></td>
 </tr>
 <tr>
 <td>CRM 与语义项目</td>
@@ -449,6 +452,44 @@ Remove-Variable lfLocalIdentity
 ]
 </code></pre>
 <p>执行时 <code>args</code> 必须为空，只接受最多 64 KiB 的单个 JSON 对象作为 stdin；不能传任意命令、原件路径或凭据。金额用十进制字符串，比例用数字。schema 只支持当前实现的简单字段约束，不使用远程引用或复杂组合。入口与 schema 检查不等于脚本内容安全，脚本仍须研发审查并在受控沙箱运行。</p>
+<h4 id="_2">已有业务技能怎样选</h4>
+<table>
+<thead>
+<tr>
+<th>技能目录</th>
+<th>用途和配套能力</th>
+<th>注意事项</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tyer-contract-session-review</code></td>
+<td>本会话合同附件、授权企业制度与 <code>scripts/calculate.py</code></td>
+<td>当前附件合同场景优先使用；不自动入库，不写CRM</td>
+</tr>
+<tr>
+<td><code>tyer-langflow-contract-evidence</code></td>
+<td>历史知识库合成合同验收，读取 <code>REFERENCE.md</code> 和 <code>scripts/report.py</code></td>
+<td>包含TEST-A-001等验收约定，不是新企业合同的默认模板</td>
+</tr>
+<tr>
+<td><code>tyer-contract-review</code></td>
+<td>CRM审查清单、提交审查发现、获取审查汇总</td>
+<td>依赖CRM-REVIEW的四个具体工具；包含业务写入，不能当作只读附件技能直接替换</td>
+</tr>
+<tr>
+<td><code>tyer-market-price-collector</code></td>
+<td>浏览器行情取证，按需用CRM报价工具录入</td>
+<td>技能不自带浏览器；当前双引擎接入未提供完整浏览器执行能力，不能仅勾选便宣称自动采集可用</td>
+</tr>
+<tr>
+<td><code>tyer-skill-selftest</code></td>
+<td>技能元数据、正文、附加资源三级加载自检</td>
+<td>不执行脚本、不证明MCP或业务链路已通过</td>
+</tr>
+</tbody>
+</table>
+<p>自定义技能目录只是预置来源；安装到目标沙箱、绑定资源与工具、授权固定入口并发布后才成为该Agent的可执行能力。历史验收技能保留，不批量迁移或改写。</p>
 <h3 id="45">4.5 多专家如何连线</h3>
 <p>合同/信用组合按下表操作。不要用主协调 Agent 自己编写的总结替代受控专家结果。</p>
 <table>
@@ -636,6 +677,35 @@ Get-NetTCPConnection -State Listen -LocalPort 8765 -ErrorAction SilentlyContinue
 <h3 id="65">6.5 聊天授权与同任务恢复</h3>
 <p>缺令牌 → 工具暂停 → 授权卡 → 点击去授权 → 浏览器本人登录 → 回到<strong>同一个环境、同一任务</strong> → 等待恢复与实际工具结果。登录成功页不代表任务已成功。</p>
 <p>检查任务是否仍在等待、授权主体是否正确、回调端口是否一致、工具结果是否出现、是否只调用一次。误用 admin 授权的 sales01 会话不能作为低权限通过证明；应撤销该连接的错误授权，重新发起本人测试。旧授权页、旧任务登录不能补认到新任务。超时后应新建任务，不篡改超时状态或静默重放。</p>
+<h3 id="66-crm">6.6 现有 CRM 工具按什么职责使用</h3>
+<table>
+<thead>
+<tr>
+<th>职责</th>
+<th>工具与使用顺序</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>客户与信用只读</td>
+<td><code>find_customer</code>确认唯一字符串ID，再调用<code>get_customer_credit_control</code>、<code>get_customer_performance</code>、<code>get_customer_profile</code>、<code>list_receivables</code>；订单详情用<code>get_order_detail</code></td>
+</tr>
+<tr>
+<td>固定指标与语义问数</td>
+<td><code>list_business_metrics</code> / <code>query_business_metric</code>；<code>list_ask_objects</code> / <code>ask_business</code>，由CRM/Wren网关校验语义和本人权限</td>
+</tr>
+<tr>
+<td>价量机制与模拟分析</td>
+<td><code>analyze_sales_mechanism</code>，环境、输入和结论边界见7.10</td>
+</tr>
+<tr>
+<td>报价记录</td>
+<td><code>find_price_products</code>唯一匹配商品 → <code>list_competitor_prices</code>核对已有记录 → <code>record_competitor_price</code>写入</td>
+</tr>
+</tbody>
+</table>
+<p>报价录入先阅读MCP仓库 <code>docs/competitor-price-tools.md</code> 与配套技能，字段必须有来源、规格、币种、单位、税费/交付口径、报价日期及带时区采集时间。缺关键证据就保留待复核，不能填“未知”凑过校验。当前没有服务端原子幂等保障，应串行处理，不开启并发自动写入。只读场景不要授予该写入工具；接入存在不等于自动行情采集已经完成。</p>
+<p>CRM-REVIEW和邮件服务的工具以各自README和实际注册目录为准，按独立鉴权用途配置。普通查询不应为了省一次授权改接共用服务账号。新企业不需要一次开放全部工具，按场景选择最小集合。</p>
 <h2 id="7-wren">7. 用 Wren 技能建立业务语义模型</h2>
 <h3 id="71">7.1 先分清三类东西</h3>
 <table>
@@ -823,6 +893,133 @@ properties:
 <li>看板里的手填身份/预设仅是调试输入，不是员工真实 SSO 权限证明。最终低权限验证回到 TeKnowra + 本人 CRM OAuth。</li>
 </ol>
 <p>无需看板服务时，可阅读 <code>D:/CRM/CRM2/crm/ask-wren/target/model-book.html</code> 离线说明书。它是生成时快照，不代表当前模型已重新构建。顶部齿轮涉及模型配置，不截图或传播密钥。</p>
+<h3 id="710-dowhy">7.10 用 DoWhy 分析经营机制</h3>
+<p><strong>Wren 负责按业务语义和本人权限取数；DoWhy 负责执行已定义的分析计算。</strong> DoWhy 已接入 CRM MCP，不是独立 Agent 引擎，也不代替 Wren 建模技能。业务研发通过 MCP 工具使用它，不需要在画布里写任意 Python 或直接连接业务数据库。</p>
+<p>实际链路是：TeKnowra 当前用户 → 本人 CRM OAuth → CRM 菜单与数据范围 → Wren 固定语义模板及网关校验 → 完整授权明细 → MCP 启动独立 DoWhy 子进程 → 返回结构化证据与结论。DoWhy 子进程只接收本次 JSON 数据，不接收数据库、OAuth 或模型凭据。</p>
+<h4 id="_3">管理员准备独立计算环境</h4>
+<ol>
+<li>查看 MCP 仓库 <code>mcp-tyer-crm/requirements-dowhy.txt</code>，当前固定 <code>dowhy==0.14</code>。在独立 Python 环境安装；不要往正在运行 FastMCP 的环境直接追加整套科学计算依赖。</li>
+<li>本机已存在 <code>D:/TeKnowra/research/dowhy-pilot-20261006/.venv/Scripts/python.exe</code>，可复用，不必新装。新环境由管理员创建虚拟环境，再执行该解释器的 <code>-m pip install -r mcp-tyer-crm/requirements-dowhy.txt</code>。</li>
+<li>在 <strong>MCP 进程</strong>配置 <code>DOWHY_PYTHON</code> 为解释器绝对路径，并按既有维护方式重新加载该服务。Linux 或容器必须填该进程可见的路径，不能照抄本机 D 盘路径。</li>
+<li>核对 CRM 已有 <code>/askObject/sales-mechanism-data</code>、本人菜单权限、Wren 模型和固定取数模板。只注册工具而没有后端取数能力，不能运行。</li>
+</ol>
+<p>此步骤不需要修改 TeKnowra 模型配置，也不能用共用管理员令牌替代用户授权。当前未配置环境返回 <code>ANALYSIS_NOT_CONFIGURED</code>；运行失败返回 <code>ANALYSIS_FAILED</code>，都不能让模型编造一个“分析成功”的结果。</p>
+<h4 id="langflow">在 Langflow 中配置与使用</h4>
+<ol>
+<li>在 TeKnowra 智能体的 MCP 服务中选现有 CRM MCP，将 <code>analyze_sales_mechanism</code> 加入允许工具。保留按人 OAuth。</li>
+<li>保存资源配置，按第4.2节复制并连接目录。在 TeKnowra MCP 组件中选择该工具，接入原生 Agent 的 Tools；不要把计算环境路径或业务系统密钥放进提示词。</li>
+<li>提示词要求用户给出<strong>准确商品、规格和两个明确月份</strong>。未给齐时先澄清，多个规格候选交给用户选，不能任取一项代表整个企业。</li>
+<li>固定发布，在 TeKnowra 聊天试运行。缺少本人令牌时走授权卡，恢复同一任务；<code>thread_id</code> 使用平台注入的真实会话上下文，不要求用户编造 UUID。</li>
+<li>检查真实工具步骤与返回字段，保留 <code>planId</code>、期间、数量金额核对及限制说明。<code>ask_business</code> 可用于后续明细钻取，但不能把任意新查结果冒充原分析的同一快照。</li>
+</ol>
+<p>工具输入如下；没有列出的字段不能让模型自由扩展为 SQL 或代码。</p>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>配置要求</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>product_name</code></td>
+<td>准确商品名，非空，最多100字符</td>
+</tr>
+<tr>
+<td><code>current_month</code> / <code>previous_month</code></td>
+<td>不同的 <code>YYYY-MM</code> 月份，年份2000～2100；由服务计算完整期间</td>
+</tr>
+<tr>
+<td><code>specification</code></td>
+<td>明确规格；有歧义先选，不跨规格或单位强行合并</td>
+</tr>
+<tr>
+<td><code>thread_id</code></td>
+<td>平台真实会话上下文</td>
+</tr>
+<tr>
+<td><code>include_business_evidence</code></td>
+<td>默认不要求附加经营因果试点；只有明确模拟分析才开启</td>
+</tr>
+<tr>
+<td><code>scenario</code></td>
+<td>模拟试点场景枚举，不是任意生产因果问题</td>
+</tr>
+</tbody>
+</table>
+<h4 id="_4">当前已实现什么，结果怎样读</h4>
+<p><strong>第一层是价量机制分解。</strong> 图和乘积机制来自“销售额＝销量×加权成交价”的业务恒等式，不是从两个期间的汇总值中发现经营因果。计算先对平授权范围内完整明细，不能静默丢弃坏行、截断、缺失或重复记录，再用 DoWhy GCM 计算四种价量组合，并对称分摊数量和价格贡献。</p>
+<p>例如纯合成数据：上期100吨、70万元，本期120吨、96万元。总额增加26万元，数量贡献15万元、加权成交价贡献11万元。此例只是说明计算口径，不是某个客户的实际运行结果。价格项包含客户、订单组合变化，不能说“调价带来了11万元收入”，更不能据此断言业务员或交付问题是根因。</p>
+<table>
+<thead>
+<tr>
+<th>返回字段</th>
+<th>必须检查的含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ok</code>、<code>dowhyExecuted</code>、<code>dowhyVersion</code></td>
+<td>是否真实成功执行及所用版本；不能只看自然语言答案</td>
+</tr>
+<tr>
+<td><code>detailReconciliation</code>、<code>reconciliation.passed</code></td>
+<td>明细与汇总是否对平；失败必须保留失败</td>
+</tr>
+<tr>
+<td><code>contributions</code>、<code>salesChange</code></td>
+<td>两项贡献及总变化；展示舍入差额独立标注，不当业务因素</td>
+</tr>
+<tr>
+<td><code>evidence</code></td>
+<td>本人范围、期间、行数、取数计划等依据</td>
+</tr>
+<tr>
+<td><code>businessRootCauseVerified</code></td>
+<td>当前为 <code>false</code>；不得解释成已证明真实经营根因</td>
+</tr>
+<tr>
+<td><code>answerText</code>、<code>limitations</code></td>
+<td>优先保留工具的可信结论和适用边界，避免模型另算另编</td>
+</tr>
+</tbody>
+</table>
+<p><strong>第二层是限定的模拟经营因果试点。</strong> 仅在用户明确要求本机模拟、商品名带“模拟-”、<code>include_business_evidence=true</code> 时使用。当前场景为“交付延迟影响采购”“延迟存在但不影响采购”“市场需求下降”“成交价上涨”“多因素叠加”。数据还必须标记 <code>simulation=true</code>；不是企业真实因果分析的通用入口。</p>
+<p>该试点按客户配对两期，至少200条记录、100个完整客户；固定人工因果图和线性加性假设，按客户拆分训练与留出集，并进行50次客户聚类 bootstrap。输出包括延迟效应、探索性区间、留出误差及解释残差。当前门槛为留出采购量 RMSE 不超过5、解释残差不超过每客户2吨；不合格直接拒绝。结果是<strong>每客户后续采购量</strong>的变化，不能与第一层销售额贡献混加。它仍返回 <code>businessRootCauseVerified=false</code>，没有完成图证伪或噪声独立性验证。</p>
+<p>新增真实企业因果场景，需要另外确认时间顺序、混杂因素、样本完整性、业务因果图和验证标准，再扩展受控工具。只新建 Wren MDL 或换提示词，不能自动获得可信因果推断。</p>
+<h4 id="_5">定向验证和排错</h4>
+<p>先用独立 DoWhy 解释器执行 MCP 仓库的 <code>tests/test_dowhy_runner.py</code>、<code>tests/test_repeat_purchase.py</code>、<code>tests/test_sales_reconciliation.py</code>；MCP 本身使用自己的解释器验证 <code>tests/test_sales_mechanism.py</code>。这些是离线单元测试，不等于真实账号权限或生产数据验收。完整场景另记录：用户与资源范围、真实工具调用、取数计划、输入口径、真实执行标记、核对结果和失败拒绝。</p>
+<table>
+<thead>
+<tr>
+<th>问题</th>
+<th>排查位置</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>未配置 / 缺少模块</td>
+<td>MCP 进程的 <code>DOWHY_PYTHON</code>，以及对应解释器的依赖；不是 Langflow 解释器</td>
+</tr>
+<tr>
+<td>401 / 授权卡</td>
+<td>当前用户 CRM OAuth 与回调；不借用发布者令牌</td>
+</tr>
+<tr>
+<td>403 / 无数据</td>
+<td>CRM 菜单及数据范围、Wren 固定模板与计划；不放宽权限</td>
+</tr>
+<tr>
+<td>规格不明确 / 对平失败</td>
+<td>商品候选、期间、单位、明细完整性；不静默删数据凑结果</td>
+</tr>
+<tr>
+<td>模拟试点拒绝</td>
+<td>模拟标记、场景、配对、样本量、误差和残差；不修改门槛以得到成功</td>
+</tr>
+</tbody>
+</table>
+<p>源码定位：MCP 仓库 <code>mcp-tyer-crm/sales_mechanism.py</code>（工具与子进程）、<code>dowhy_runner.py</code>（价量与快照核对）、<code>repeat_purchase_runner.py</code>（模拟试点）、<code>requirements-dowhy.txt</code>（独立依赖）；CRM 侧入口属于 CRM 仓库，不由 TeKnowra 自己绕过网关取数。</p>
 <h2 id="8-agent">8. 共享 Agent 与员工使用</h2>
 <ol>
 <li>源空间管理员或有权限研发进入 Agent“共享管理”，选择允许的接收空间/对象和权限，保存。</li>
@@ -1128,4 +1325,79 @@ AgentID / FlowID或Eino定义 / 发布ID或实现指纹：
 <p>最初截图核对只保留了前后摘要；后续从现存 SQLite 主库与 WAL 写前日志在内存中还原出当时的完整草稿，四个前后摘要均精确匹配原记录。逐字段比对确认：除表中字段外，全部节点模板、实际参数、提示词、资源ID、技能脚本开关、专家职责、组件代码、节点位置、输出选择和连线一致。核实时的当前草稿及日志覆盖区间内的中间已提交版本也符合这一结论。未写回或另复制数据库。</p>
 <p>固定发布清单与截图前完全一致；这两张草稿关联的 <strong>6 个私有发布工件</strong>，重新计算的图摘要均与各自发布记录一致，持有人一致，包括两个当前活跃版本。没有覆盖运行图、激活新版本或将草稿变化发布。</p>
 <p>原始<a href="界面截图核对记录.json">界面截图核对记录</a>保留原样。完整依据见<a href="自动保存变化核实报告.md">自动保存变化核实报告</a>和<a href="自动保存变化核实结果.json">逐字段核实结果</a>。记录不含密码、目录票据或 API Key。本次只确认这两张草稿此次变化的性质，不能据此假定未来所有自动保存都不改变配置；后续实际改参数或更新组件仍按既定发布、验收流程处理。</p>
-<p>本轮是界面与步骤核对，不是新一轮模型、工具或权限验收。目录未连接的候选空态已如实展示；未通过额外授权或刷新动作把它改成成功截图。</p></main><a class="top" href="#top">回到目录</a></body></html>
+<p>本轮是界面与步骤核对，不是新一轮模型、工具或权限验收。目录未连接的候选空态已如实展示；未通过额外授权或刷新动作把它改成成功截图。</p>
+<h3 id="126">12.6 实现与操作说明覆盖检查</h3>
+<p>已额外核对全部5个 <code>tyer-*</code> 预置技能，以及CRM服务直接注册与模块注册的工具分组；见4.4和6.6。</p>
+<p>本表用于研发移交时反查实际能力，不把“源码存在”自动算作“客户场景已验收”。已有截图仍对应原拍摄页面；本次文档审查没有重新打开流程或触发自动保存。</p>
+<table>
+<thead>
+<tr>
+<th>实际能力与实现入口</th>
+<th>操作说明</th>
+<th>使用边界</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Casdoor OIDC、业务 CAS / 本人 OAuth</td>
+<td>1.1、2.3、6.5；部署手册第5章</td>
+<td>平台登录与业务授权分开；画布独立认证</td>
+</tr>
+<tr>
+<td>模型、知识库、MCP 动态目录与能力桥</td>
+<td>3.2、4.2；<code>langflowcatalog</code>、<code>hostcapability</code></td>
+<td>目录连接不授予超出员工范围的业务权限</td>
+</tr>
+<tr>
+<td>附件暂存与会话索引策略</td>
+<td>3.3、第10章；<code>session_attachment_staging.go</code></td>
+<td>合同不自动入库，历史索引策略不批量改写</td>
+</tr>
+<tr>
+<td>技能、固定脚本与沙箱</td>
+<td>4.4、第10章；<code>internal/sandbox/</code></td>
+<td>需配置沙箱和快照镜像，不等同任意代码执行</td>
+</tr>
+<tr>
+<td>Langflow 多专家、固定发布和激活旧版</td>
+<td>4.5～4.6；<code>integrations/langflow/</code>、<code>langflowrelease</code></td>
+<td>发布与草稿分开；事实复核失败不自动重试到成功</td>
+</tr>
+<tr>
+<td>Eino 定义目录与实现指纹</td>
+<td>第5章；<code>einodef</code>、<code>einoruntime</code></td>
+<td>当前只读单次文本；不承诺附件、技能、多轮或共享</td>
+</tr>
+<tr>
+<td>MCP 开发、注册与任务授权恢复</td>
+<td>第6章；MCP <code>server.py</code>、<code>tyer_mcp_core/</code></td>
+<td>回调须按环境登记，CRM雪花ID始终字符串</td>
+</tr>
+<tr>
+<td>Wren MDL、语义、指标与审定</td>
+<td>7.1～7.9；CRM <code>ask-wren/</code>、<code>semantic-wren/</code></td>
+<td>建模后仍需业务口径及权限验收</td>
+</tr>
+<tr>
+<td>DoWhy 机制分解与模拟试点</td>
+<td>7.10；MCP 三个分析模块</td>
+<td>不宣称真实经营根因已验证</td>
+</tr>
+<tr>
+<td>共享、撤权与运行诊断</td>
+<td>第8～9章；<code>langflow_authority</code>、消息诊断</td>
+<td>当前用户实时范围；诊断专用接口也有角色限制</td>
+</tr>
+<tr>
+<td>并发、中断收尾与恢复</td>
+<td>9.3；<code>runbudget</code>、Redis live marker</td>
+<td>进程内并发2，本机单实例；不自动重放工具</td>
+</tr>
+<tr>
+<td>安装依赖、配置、备份和回退</td>
+<td><a href="../部署操作手册/README.md">部署操作手册</a></td>
+<td>无新交付包；干净Linux和生产容量仍需目标环境确认</td>
+</tr>
+</tbody>
+</table>
+<p>移交新增业务时，先补业务口径、资源与操作步骤，再用本表检查是否涉及新的能力入口；不能只在速查表列模块名便算完成说明。</p></main><a class="top" href="#top">回到目录</a></body></html>

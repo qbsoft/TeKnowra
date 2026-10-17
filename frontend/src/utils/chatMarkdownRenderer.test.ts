@@ -8,6 +8,7 @@ import {
   markStandaloneStrongParagraphs,
   normalizeFullwidthMarkdownImageParentheses,
   normalizeLegacyImageContextMarkup,
+  repairUnambiguousTableSeparators,
   preprocessMathDelimiters,
   renderChatMarkdown,
   repairFlankingEmphasis,
@@ -23,6 +24,25 @@ import {
 } from './citationMarkdown.ts'
 
 const SAMPLE_DOC = 'example-report.docx'
+
+test('repairUnambiguousTableSeparators renders all business detail columns without changing values', () => {
+  const markdown='结果\n\n| 订单 | 客户 | 金额 |\n|---|---:|\n| SQ1 | 金宇 | 1,107,000.00 |\n| SQ2 | 河口 | 888,000.00 |'
+  const repaired=repairUnambiguousTableSeparators(markdown)
+  assert.match(repaired,/\| --- \| ---: \| --- \|/)
+  const renderer=createChatMarkdownRenderer({})
+  const output=renderChatMarkdown(markdown,{renderer,escapeMarkdown:text=>text,sanitizeHtml:text=>text,streaming:false})
+  assert.match(output,/<table/)
+  assert.equal((output.match(/<td/g)||[]).length,6)
+  assert.match(output,/1,107,000\.00/)
+})
+
+test('table separator repair preserves code, escaped pipes and genuinely inconsistent rows', () => {
+  const bad='| a | b | c |\n|---|---|\n| one | two |'
+  const code='```md\n| a | b |\n|---|\n| 1 | 2 |\n```'
+  const escaped='| a | b |\n|---|\n| one\\|two | three |'
+  const nested='```md\n```javascript\n| a | b |\n|---|\n| 1 | 2 |\n```'
+  for (const text of [bad,code,escaped,nested]) assert.equal(repairUnambiguousTableSeparators(text),text)
+})
 const SAMPLE_CHUNK_A = '00000001-0000-4000-8000-000000000001'
 const SAMPLE_CHUNK_B = '00000002-0000-4000-8000-000000000002'
 const SAMPLE_CHUNK_C = '00000003-0000-4000-8000-000000000003'

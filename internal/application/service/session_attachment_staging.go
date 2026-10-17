@@ -12,6 +12,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/sandbox"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	secutils "github.com/Tencent/WeKnora/internal/utils"
 )
 
@@ -29,6 +30,19 @@ type stagedSessionAttachment struct {
 
 // parsedSidecarSuffix names the staged Markdown beside a binary attachment.
 const parsedSidecarSuffix = ".parsed.md"
+
+// Full-text Langflow materials are projected by the handler, not exported as
+// files. In particular, never revive unrelated/expired inventory into a sandbox.
+func stageAttachmentInventory(ctx context.Context, repo interfaces.MessageRepository, sessionID string, textProjectionOnly bool, stage func(types.MessageAttachments) ([]stagedSessionAttachment, error)) ([]stagedSessionAttachment, error) {
+	if textProjectionOnly {
+		return nil, nil
+	}
+	rows, err := repo.GetSessionAttachments(ctx, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("load session attachments for sandbox staging: %w", err)
+	}
+	return stage(rows)
+}
 
 // sessionSandboxFileStore returns the manager's effective session filesystem
 // capability, or nil when the backend cannot support it. Centralised so

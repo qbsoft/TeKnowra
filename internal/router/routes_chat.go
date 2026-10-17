@@ -29,6 +29,9 @@ func RegisterMessageRoutes(r *gin.RouterGroup, handler *handler.MessageHandler, 
 		historyMessages.GET("/chat-history-stats", g.Viewer(), handler.GetChatHistoryKBStats)
 		chatMessages.GET("/:session_id/load", g.Viewer(), handler.LoadMessages)
 		chatMessages.DELETE("/:session_id/:id", g.Viewer(), handler.DeleteMessage)
+		// Browser-only diagnostics: no API-key capability exemption; handler also
+		// requires a web principal and the existing service enforces session ownership.
+		messages.GET("/:session_id/:id/execution-diagnostics", g.Contributor(), handler.GetExecutionDiagnostics)
 	}
 }
 

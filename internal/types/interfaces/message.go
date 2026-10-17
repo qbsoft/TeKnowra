@@ -7,6 +7,15 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
+// SessionChatHistoryPolicy is a tenant-scoped, persistent opt-out lookup.
+type SessionChatHistoryPolicy interface {
+	SessionChatHistoryIndexingDisabled(context.Context, uint64, string) (bool, error)
+}
+
+type SessionAttachmentInventory interface {
+	GetSessionAttachments(context.Context, string) (types.MessageAttachments, error)
+}
+
 // MessageService defines the message service interface
 type MessageService interface {
 	// CreateMessage creates a message

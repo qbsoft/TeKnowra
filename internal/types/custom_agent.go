@@ -155,6 +155,8 @@ func (a *CustomAgent) ValidateAvatar() error {
 
 // CustomAgentConfig represents the configuration of a custom agent
 type CustomAgentConfig struct {
+	ExecutionEngine string `yaml:"execution_engine,omitempty" json:"execution_engine,omitempty"`
+	EinoDefinition  string `yaml:"eino_definition,omitempty" json:"eino_definition,omitempty"`
 	// ===== Basic Settings =====
 	// Agent mode: "quick-answer" for RAG mode, "smart-reasoning" for ReAct agent mode
 	AgentMode string `yaml:"agent_mode" json:"agent_mode" extensions:"x-agent"`
@@ -319,6 +321,10 @@ type CustomAgentConfig struct {
 	// the workspace setting; false opts a single agent out of memory even when
 	// the workspace has it on. There is no "on" that overrides the workspace.
 	MemoryEnabled *bool `yaml:"memory_enabled" json:"memory_enabled,omitempty"`
+	// Disable automatic Q&A indexing for this agent and subsequent turns in the session.
+	DisableChatHistoryIndexing bool `yaml:"disable_chat_history_indexing" json:"disable_chat_history_indexing"`
+	// Allow bounded full-text session materials in Langflow. Also disables Q&A indexing.
+	AllowSessionAttachments bool `yaml:"allow_session_attachments" json:"allow_session_attachments"`
 
 	// ===== Retrieval Strategy Settings (for both modes) =====
 	// Embedding/Vector retrieval top K
@@ -504,6 +510,9 @@ func (c *CustomAgentConfig) ResolveChatParserEngine(fileType string) string {
 
 // Value implements driver.Valuer interface for CustomAgentConfig
 func (c CustomAgentConfig) Value() (driver.Value, error) {
+	if err := c.ValidateExecutionEngine(); err != nil {
+		return nil, err
+	}
 	return json.Marshal(c)
 }
 
@@ -601,7 +610,7 @@ func (a *CustomAgent) EnsureDefaults() {
 	if a.Config.WebSearchMaxResults == 0 {
 		a.Config.WebSearchMaxResults = 5
 	}
-	if a.Config.HistoryTurns == 0 {
+	if a.Config.HistoryTurns == 0 && a.Config.ExecutionEngine != "eino" {
 		a.Config.HistoryTurns = 5
 	}
 	// Retrieval strategy defaults
@@ -625,7 +634,7 @@ func (a *CustomAgent) EnsureDefaults() {
 	// time". Do not materialize a number here — that would make the editor
 	// treat a chosen default as a custom cap.
 	// Agent mode should always enable multi-turn conversation
-	if a.Config.AgentMode == AgentModeSmartReasoning {
+	if a.Config.AgentMode == AgentModeSmartReasoning && a.Config.ExecutionEngine != "eino" {
 		a.Config.MultiTurnEnabled = true
 	}
 	// Keep the legacy boolean consistent with the graded level. ReasoningEffort

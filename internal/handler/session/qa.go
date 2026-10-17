@@ -261,7 +261,7 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 	// Get custom agent if agent_id is provided. Backend resolves shared agent from share relation (no client-provided tenant).
 	customAgent, effectiveTenantID, sharedAgentReadOnly := h.resolveAgent(ctx, c, request.AgentID, request.AgentSourceTenantID)
 	if request.AgentSourceTenantID != 0 && customAgent == nil {
-		return nil, nil, errors.NewNotFoundError("Shared agent not found")
+		return nil, nil, h.persistUnavailableSharedAgent(ctx, c, session, request.Query, requestID)
 	}
 
 	// Merge @mentioned items into knowledge_base_ids and knowledge_ids
@@ -459,6 +459,20 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 	)
 
 	executionContext.LocalBrowserEnabled = request.LocalBrowserEnabled
+	if customAgent != nil {
+		executionContext.ExecutionEngine = customAgent.Config.ExecutionEngine
+		executionContext.ExecutionDefinition = customAgent.Config.EinoDefinition
+		if executionContext.ExecutionEngine == "" {
+			if d, ok := h.config.EinoDefinition(customAgent.ID); ok {
+				executionContext.ExecutionEngine, executionContext.ExecutionDefinition = "eino", d
+			} else if b, ok := h.config.LangflowBinding(customAgent.ID); ok {
+				executionContext.ExecutionEngine, executionContext.ExecutionDefinition = "langflow", b.ReleaseID
+			}
+		}
+		if executionContext.ExecutionEngine == "eino" || executionContext.ExecutionEngine == "langflow" {
+			executionContext.ExecutionOwner = executionProcessID
+		}
+	}
 
 	// Build request context
 	reqCtx := &qaRequestContext{
@@ -569,6 +583,7 @@ func buildMessageExecutionContext(
 	if agent == nil {
 		return snapshot, "", effectiveTenantID, modelOverride
 	}
+	snapshot.ChatHistoryIndexingDisabled = agent.Config.DisableChatHistoryIndexing || agent.Config.AllowSessionAttachments
 
 	modelID := modelOverride
 	if modelID == "" {
@@ -776,6 +791,9 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 	// agent that cannot read the memory must not keep writing to it.
 	if reqCtx.customAgent != nil {
 		baseCtx = types.ApplyAgentMemoryPreference(baseCtx, reqCtx.customAgent.Config.MemoryEnabled)
+	}
+	if reqCtx.assistantMessage != nil && reqCtx.assistantMessage.ExecutionContext.ChatHistoryIndexingDisabled {
+		baseCtx = types.WithMemoryDisabled(baseCtx)
 	}
 
 	eventBus := event.NewEventBus()
@@ -1106,6 +1124,20 @@ const (
 // new assistant instead of seeing an empty session. executeQA skips work that
 // is already done when those IDs are populated.
 func (h *Handler) persistTurnMessages(ctx context.Context, reqCtx *qaRequestContext) error {
+	disabled := reqCtx.customAgent != nil && (reqCtx.customAgent.Config.DisableChatHistoryIndexing || reqCtx.customAgent.Config.AllowSessionAttachments)
+	if policy, ok := h.messageService.(interfaces.SessionChatHistoryPolicy); ok {
+		sticky, err := policy.SessionChatHistoryIndexingDisabled(ctx, reqCtx.session.TenantID, reqCtx.sessionID)
+		if err != nil {
+			return err
+		}
+		disabled = disabled || sticky
+	}
+	if disabled && reqCtx.assistantMessage == nil {
+		reqCtx.assistantMessage = &types.Message{SessionID: reqCtx.sessionID, Role: "assistant", RequestID: reqCtx.requestID, CreatedAt: time.Now()}
+	}
+	if disabled {
+		reqCtx.assistantMessage.ExecutionContext.ChatHistoryIndexingDisabled = true
+	}
 	createdUser := false
 	if reqCtx.userMessageID == "" {
 		userMessageAttachments := reqCtx.attachments
@@ -1258,6 +1290,13 @@ func (h *Handler) holdQATurn(ctx context.Context, reqCtx *qaRequestContext) (fun
 func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle bool) {
 	ctx := reqCtx.ctx
 	sessionID := reqCtx.sessionID
+	if mode != qaModeAgent && reqCtx.assistantMessage != nil {
+		// A KnowledgeQA request may carry an agent for its settings while
+		// running the native pipeline. Do not label it as an embedded run.
+		reqCtx.assistantMessage.ExecutionContext.ExecutionEngine = ""
+		reqCtx.assistantMessage.ExecutionContext.ExecutionDefinition = ""
+		reqCtx.assistantMessage.ExecutionContext.ExecutionOwner = ""
+	}
 
 	// Persist the input-bar state used for this request so reopening the
 	// session can rehydrate agent / model / KB / web-search / MCP selections.
@@ -1520,7 +1559,15 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 
 		var serviceErr error
 		var stageName string
-		if mode == qaModeNormal {
+		if mode == qaModeAgent && h.config != nil && reqCtx.customAgent != nil {
+			if _, enabled := h.config.LangflowBinding(reqCtx.customAgent.ID); enabled {
+				serviceErr = h.prepareSessionContractMaterials(streamCtx.asyncCtx, reqCtx)
+				qaReq.Attachments = reqCtx.attachments
+			}
+		}
+		if serviceErr != nil {
+			stageName = "agent_execution"
+		} else if mode == qaModeNormal {
 			stageName = "knowledge_qa_execution"
 			serviceErr = h.sessionService.KnowledgeQA(streamCtx.asyncCtx, qaReq, streamCtx.eventBus)
 		} else {
@@ -1540,6 +1587,13 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 				logger.Infof(streamCtx.asyncCtx, "QA cancelled by user stop for session: %s", sessionID)
 			} else {
 				logger.ErrorWithFields(streamCtx.asyncCtx, serviceErr, nil)
+				var extra map[string]interface{}
+				if reqCtx.customAgent != nil && reqCtx.customAgent.Config.ExecutionEngine == "langflow" {
+					extra = map[string]interface{}{"execution_engine": "langflow"}
+				}
+				if reqCtx.customAgent != nil && reqCtx.customAgent.Config.ExecutionEngine == "eino" {
+					extra = map[string]interface{}{"execution_engine": "eino", "definition_version": reqCtx.customAgent.Config.EinoDefinition}
+				}
 				streamCtx.eventBus.Emit(streamCtx.asyncCtx, event.Event{
 					Type:      event.EventError,
 					SessionID: sessionID,
@@ -1547,6 +1601,7 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 						Error:     serviceErr.Error(),
 						Stage:     stageName,
 						SessionID: sessionID,
+						Extra:     extra,
 					},
 				})
 			}

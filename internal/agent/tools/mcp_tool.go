@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/agent/approval"
+	"github.com/Tencent/WeKnora/internal/agent/runbudget"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/mcp"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -34,6 +36,18 @@ type MCPTool struct {
 	schemaErr              error
 	registeredName         string
 	serverInstructions     string
+	callAuthorizer         func(context.Context) error
+	pinnedArguments        json.RawMessage
+}
+
+// SetCallAuthorizer lets the host revalidate its immutable capability before
+// each actual CallTool, including after OAuth waiting or transport retry.
+func (t *MCPTool) SetCallAuthorizer(check func(context.Context) error) { t.callAuthorizer = check }
+
+// PinArguments is opt-in for host-generated calls with a confirmed binding.
+// Human approval may reject the call, but cannot silently change that binding.
+func (t *MCPTool) PinArguments(args json.RawMessage) {
+	t.pinnedArguments = append(json.RawMessage(nil), args...)
 }
 
 // NewMCPTool creates a new MCP tool wrapper. authWaitTimeoutSeconds carries the
@@ -141,6 +155,8 @@ func (t *MCPTool) callToolTimeout(engineTimeout time.Duration) time.Duration {
 // Execute executes the MCP tool
 func (t *MCPTool) Execute(ctx context.Context, args json.RawMessage) (*types.ToolResult, error) {
 	logger.GetLogger(ctx).Infof("Executing MCP tool: %s from service: %s", t.mcpTool.Name, t.service.Name)
+	// Preserve host metadata even if an approval wait replaces the timeout context.
+	conversationMeta, _ := ToolExecFromContext(ctx)
 
 	// Re-check the policy at call time as well as during registration. An agent
 	// engine may outlive a settings change, and a disabled tool must not remain
@@ -189,6 +205,10 @@ func (t *MCPTool) Execute(ctx context.Context, args json.RawMessage) (*types.Too
 				if meta.ApprovalCtx != nil {
 					waitCtx = meta.ApprovalCtx
 				}
+				resume, pauseErr := runbudget.PauseApproval(waitCtx)
+				if pauseErr != nil {
+					return &types.ToolResult{Success: false, Error: "任务等待预算不可用"}, nil
+				}
 				var decision approval.Decision
 				var waitErr error
 				if resumed {
@@ -224,6 +244,7 @@ func (t *MCPTool) Execute(ctx context.Context, args json.RawMessage) (*types.Too
 						ToolCallID:         meta.ToolCallID,
 					})
 				}
+				resume()
 				if waitErr != nil {
 					return &types.ToolResult{
 						Success: false,
@@ -279,6 +300,13 @@ func (t *MCPTool) Execute(ctx context.Context, args json.RawMessage) (*types.Too
 		}
 	}
 
+	if len(t.pinnedArguments) > 0 {
+		var pinned MCPInput
+		if json.Unmarshal(t.pinnedArguments, &pinned) != nil || !reflect.DeepEqual(pinned, input) {
+			return &types.ToolResult{Success: false, Error: "已确认的业务参数不能在审批中更换，请重新发起任务"}, nil
+		}
+	}
+	input = t.bindBusinessSession(input, conversationMeta)
 	isStdio := t.service.TransportType == types.MCPTransportStdio
 	meta := execMeta
 	oauthSess := oauthSessionFromToolExec(ctx, meta).withAuthWaitTimeout(t.authWaitTimeoutSeconds)
@@ -301,10 +329,15 @@ func (t *MCPTool) Execute(ctx context.Context, args json.RawMessage) (*types.Too
 	}
 
 	connectAndCall := func(callCtx context.Context) (*mcp.CallToolResult, error) {
-		client, err := getOrCreateMCPClientWithOAuthRetry(
+		client, operationCtx, operationCancel, err := getOrCreateMCPClientWithOAuthRetry(
 			callCtx, t.mcpManager, t.service, t.gate, oauthSess, t.mcpTool.Name, toolCallID,
 		)
+		defer operationCancel()
+		callCtx = operationCtx
 		if err != nil {
+			return nil, err
+		}
+		if err := t.checkCallPolicy(callCtx); err != nil {
 			return nil, err
 		}
 		if isStdio {
@@ -322,10 +355,15 @@ func (t *MCPTool) Execute(ctx context.Context, args json.RawMessage) (*types.Too
 			logger.GetLogger(callCtx).Warnf("MCP tool call failed, retrying with fresh connection: %v", err)
 			_ = client.Disconnect()
 
-			client, err = getOrCreateMCPClientWithOAuthRetry(
+			client, operationCtx, operationCancel, err = getOrCreateMCPClientWithOAuthRetry(
 				callCtx, t.mcpManager, t.service, t.gate, oauthSess, t.mcpTool.Name, toolCallID,
 			)
+			defer operationCancel()
+			callCtx = operationCtx
 			if err != nil {
+				return nil, err
+			}
+			if err := t.checkCallPolicy(callCtx); err != nil {
 				return nil, err
 			}
 			result, err = client.CallTool(callCtx, t.mcpTool.Name, input)
@@ -423,6 +461,33 @@ func appendMCPStructuredContent(output string, content []mcp.ContentItem, struct
 		output += "\n\n"
 	}
 	return output + "Structured content:\n" + string(payload), nil
+}
+
+// Policy and cancellation may change while a human completes authorization.
+func (t *MCPTool) checkCallPolicy(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if t.callAuthorizer != nil {
+		if err := t.callAuthorizer(ctx); err != nil {
+			return err
+		}
+	}
+	if t.gate == nil {
+		return nil
+	}
+	tenant, ok := mcpPolicyTenantID(ctx)
+	if !ok {
+		return fmt.Errorf("MCP tool is disabled")
+	}
+	enabled, err := t.gate.IsEnabled(ctx, tenant, t.service.ID, t.mcpTool.Name)
+	if err != nil {
+		return err
+	}
+	if !enabled {
+		return fmt.Errorf("MCP tool is disabled")
+	}
+	return nil
 }
 
 const (
@@ -718,9 +783,11 @@ func loadMCPServiceTools(
 	if meta, ok := ToolExecFromContext(ctx); ok && meta != nil {
 		toolCallID = meta.ToolCallID
 	}
-	client, err := getOrCreateMCPClientWithOAuthRetry(
+	client, operationCtx, operationCancel, err := getOrCreateMCPClientWithOAuthRetry(
 		ctx, mcpManager, service, gate, regOAuth, "", toolCallID,
 	)
+	defer operationCancel()
+	ctx = operationCtx
 	if err != nil {
 		logger.GetLogger(ctx).Errorf("Failed to create MCP client for service %s: %v", service.Name, err)
 		return nil, "", err
@@ -747,9 +814,11 @@ func loadMCPServiceTools(
 			Warnf("Failed to list tools from MCP service %s (will retry with fresh connection): %v", service.Name, err)
 		_ = client.Disconnect()
 
-		client, err = getOrCreateMCPClientWithOAuthRetry(
+		client, operationCtx, operationCancel, err = getOrCreateMCPClientWithOAuthRetry(
 			ctx, mcpManager, service, gate, regOAuth, "", toolCallID,
 		)
+		defer operationCancel()
+		ctx = operationCtx
 		if err != nil {
 			logger.GetLogger(ctx).Errorf("Failed to reconnect MCP client for service %s: %v", service.Name, err)
 			return nil, "", err

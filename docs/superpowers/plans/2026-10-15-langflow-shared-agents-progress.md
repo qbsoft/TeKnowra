@@ -1,0 +1,25 @@
+# SDD ledger — plan: D:/TeKnowra/repo/docs/superpowers/plans/2026-10-15-langflow-shared-agents.md
+
+- Authorization：按上轮建议顺序实施三项遗留、共享Agent、真实账号验收；沿用当前工作区，不提交、不生产部署。
+- Preflight：技能桥缺分页字段；Go别名未复用Python替换/截断规则；初始化前失败只有Eino完成错误文本的标记；Langflow在QA和engine双重拒绝SharedAgentReadOnly。原生handler已通过共享服务解析源空间，并用WithExecutionTenant切资源范围、保持Caller与Principal。
+- Interfaces：Task1修改SkillInvocation、Python技能源码会改变技能发布组件摘要，最终须重新发布技能图；Task2不修改Python support以免无关旧发布全失效；Task3错误流兼容旧Eino；Task4复用原生共享授权而非绕过成员检查。
+- Ruling：已由用户批准当前工作区直接实施，不新建工作树，不删除历史资料；避免复制未提交依赖和额外占用磁盘。
+- Tasks1—6 pending。
+- Task1 Python续页schema测试已观察extra_forbidden RED→GREEN，宿主分页字段与原生ReadFileInput映射已实现，Go回归中。
+- Task2实际旧Go别名长名未截断测试RED，已统一Python ASCII替换/40字符截断规则，Go回归中。
+- Task3 handler初始化前失败未落库测试RED、frontend无版本时间线错误不可见测试RED；宿主标记Langflow执行并安全分类错误、前端为该错误创建失败回答节点，前端13项完整集成测试PASS。后端定向回归中。
+- Ruling：原生接收方“停用共享”目前是隐藏下拉的偏好，不是撤销授权。复用该语义；真正撤销使用原共享关系删除，不凭空把偏好改成新权限策略。代价是隐藏项仍能通过既有可用共享关系调用，最终说明明确。
+- Tasks1—3 code GREEN：service分页/跨语言别名、handler创建前安全失败与旧Eino失败、runtime技能协议定向回归PASS；Python技能3项PASS；frontend完整13项PASS。现场失败/最终发布图将在本机服务恢复后验收。
+- Task4 in progress：已写共享关系重新读取、源/接收空间与成员身份分离、共享技能范围测试，开始RED验证。真实共享入口仍使用现有组织共享服务。
+- Task4 code GREEN：复用AgentShareService.GetSharedAgentForTenant每边界重新读取准确source与receiver共享；成员查询切至Caller空间；执行空间保持源空间，Principal/MCP主体保持当前人员；共享知识授权在原RuntimeRevalidate中重新取得现有共享grant后与初始scope相交；设计目录/发布权限仍只属源空间。
+- Tests：service本轮所有TestLangflow、原生SharedAgent与UserEnv相关定向测试PASS，handler创建前/旧Eino失败PASS，runtime技能协议PASS。共享RED为缺少native share reload与receiver membership支持，现GREEN。前端完整13项PASS。开始实机后端重建，生产源码冻结至完成。
+- LF普通editor登录后，通过官方Update All升级两个技能组件，原节点ID与连线保留，技能下拉需要重新从目录选择（升级后UI默认清空）。
+- 唯一fresh只读审查完成：无Critical/Important/Minor修复项；真实账号、撤销恢复、会话隔离与DB刷新仍要求现场证据。V4已由admin UI发布（140ffce7-4f11-4caa-9df3-21bd2ad6132f）。取消业务技能绑定后，正式聊天即时显示安全失败原因；刷新后仍保留。已在UI恢复原技能绑定。Python组件完整10项PASS（需同时将integrations/langflow与components加入PYTHONPATH）。sales01独立来源页签等待用户登录。
+- 现场：V4正常合同任务四次工具全部成功，DB答案含40000/source_id/V4；同会话真实分页5次调用offset1→5，每页limit1/max_bytes1024、返回next_offset2→6，取得L3校验口令。原生250行中文分页完整性测试PASS；Python10项PASS；langflowapi/catalog/def/release/runtime/verify六包完整PASS（hostcapability无测试文件）。首次脚本一失败再重试成功但整轮按失败拒发答案，已保留，不归因/不计成功。Task5仍等sales01在独立127来源登录，尚未完成共享运行/撤销/恢复/会话隔离；报告已记录未验收状态。
+- Task5现场：sales01已登录并由DB确认用户/workspace10001。共享技能Agent首轮5项工具均成功、V4/ok、40000及source_id。admin原生撤销共享，接收方原会话两次请求未新增trace/答案，撤销检查点已独立保存；恢复后同会话2项真实能力调用成功并记得私有标记。sales01新会话不知道标记且未调用工具，直接访问admin会话未读到内容。UI仅查看菜单无编辑发布。共享MCP本人OAuth未现场重新验收；撤权入口沿用原生短暂错误处理，没有持久化清晰说明，作为明确遗留，不冒充全部通过。仅做本轮知识技能共享链路结论。
+- 追加共享MCP现场：已用原生共享管理将既有只读合同信用Agent共享给同一销售组织，sales01任务18763e69在进入LF之前被目录/发布校验拦截。个人目录并非不存在（sales01旧15工具/admin新16工具），不能借用admin快照。新增目录bootstrap回归先RED（缺少helper）；修补仅对共享MCP缺失/失效个人目录走原生RegisterMCPTools发现、本人OAuth等待与完整目录持久化，前后重查共享；随后仍执行固定发布摘要校验。普通本空间目录语义不变。GREEN回归中，尚未宣称修复通过。
+- 共享MCP追加修补GREEN：TestLangflow/SharedAgent/UserEnv定向service测试退出0，含当前调用者目录缺失bootstrap、撤权/授权拒绝无回退、同步后仍缺失/失效拒绝、已有有效个人目录不重连。通过原生目录工具传递真实session/message/Principal与OAuth超时，未增加业务写入。后端重建中（launcher26832），生产Go源码冻结至构建结束。
+- 更新现场定位：重建后明确内部错误为“绑定工具在目录中不存在”。sales01旧个人目录仍被视为有效，但缺少新增加的check_customer_access，故第一版仅缺失/失效bootstrap未触发。新增所需发布工具缺项刷新测试；个人目录更新仍走本人授权，刷新后若仍缺工具则拒绝，不借用源发布者目录。当前处于该测试RED验证，旧后端30584保持运行。
+- 所需工具缺项刷新测试已RED（旧helper不接受所需工具），实现后把required按每个服务汇总，在同步前后都检查同一主体现有目录是否完整。新增同步后仍缺工具拒绝、授权等待中撤销共享拒绝测试；service/handler定向GREEN回归中。纯目录决策helper分离便于定向测试，不改目录存储/授权规则。
+- 追加修补service与handler定向测试全部退出0。包括缺项同步、同步后仍缺项、OAuth期间撤权、现有共享与UserEnv及旧Eino失败回归。最终后端重建launcher25764，暂未通过实机MCP，不提前标记完成。
+- 最终现场：后端24872。sales01个人MCP目录经原生发现从旧15工具更新为16工具；CRM认证日志12:33起均为sales01/dept4，无admin。共享业务Agent原固定V1实际find_customer/check_customer_access/get_customer_credit_control均成功，trace4cdb94b7bc5042e29023085b5ca4c713=ok；另一客户两次find未命中、无信用读取，trace03a9ab6c4ea94190957c55cb6b9bdea5=ok。有效本人OAuth被复用，本轮未再次撤销令牌重测授权弹窗。新后端共享技能再读L2成功。证据脚本全部断言退出0，含共享撤销检查点、恢复、会话隔离、当前MCP个人目录及真实账号日志。追加修补未重复派审查，审查范围与限制已写报告。核心链路验收完成，原生入口撤权持久提示及首次脚本瞬时失败根因作为明确遗留，不冒充已修复。

@@ -1,0 +1,22 @@
+[Unit]
+Description=TeKnowra Langflow shared network recovery (host only)
+After=docker.service
+Requires=docker.service
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+# Provision this host account and Docker access separately; not an LF identity.
+User=teknowra-recovery
+ExecStart=/usr/bin/python3 -B /opt/teknowra/langflow/releases/RELEASE_ID/payload/delivery/recovery.py --root /opt/teknowra/langflow --profile /opt/teknowra/langflow-profile --locations /etc/teknowra/langflow-locations.json --compose /etc/teknowra/langflow-generated.json --overlay /etc/teknowra/langflow-infrastructure.json --project teknowra-agent
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+KillMode=control-group
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

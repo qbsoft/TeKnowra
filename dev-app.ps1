@@ -3,6 +3,8 @@
 # 与 dev.sh 的差别：dev.sh 把 REDIS_ADDR / DB_HOST 等硬编码成 localhost:6379、
 # localhost:9000 等默认端口；本机已有 PostgreSQL(5432) 和 Redis(6379) 在跑，
 # 容器版改用 15432 / 16379，所以这里一律以 .env 里的值为准，不做覆盖。
+param([switch]$TrimDebugInfo, [switch]$LangflowVerification, [string]$LangflowBindingsFile, [string]$LangflowReleasesFile, [string]$LangflowCredentialsFile, [string]$LangflowLibraryRoot)
+
 $ErrorActionPreference = 'Stop'
 $repo = $PSScriptRoot
 Set-Location $repo
@@ -47,6 +49,39 @@ function Import-DotEnv([string]$path) {
 Import-DotEnv (Join-Path $repo '.env')
 Import-DotEnv (Join-Path $repo '.env.local')
 
+if ($LangflowBindingsFile) {
+    if ($LangflowVerification) { throw '请选择通用绑定或旧验收开关之一，不能同时启用。' }
+    $bindingPath = (Resolve-Path -LiteralPath $LangflowBindingsFile).Path
+    $env:TEKNOWRA_LANGFLOW_BINDINGS_FILE = $bindingPath
+    $env:TEKNOWRA_LANGFLOW_LOCAL_TEST = 'true'
+}
+if ($LangflowReleasesFile -or $LangflowCredentialsFile -or $LangflowLibraryRoot) {
+    if (-not $LangflowBindingsFile -or -not $LangflowReleasesFile -or -not $LangflowCredentialsFile -or -not $LangflowLibraryRoot -or $LangflowVerification) { throw '固定发布需要绑定文件、发布库、服务凭据与库目录；不能启用旧验收开关。' }
+    $env:TEKNOWRA_LANGFLOW_RELEASES_FILE = [System.IO.Path]::GetFullPath($LangflowReleasesFile)
+    $env:TEKNOWRA_LANGFLOW_CREDENTIALS_FILE = (Resolve-Path -LiteralPath $LangflowCredentialsFile).Path
+    $env:TEKNOWRA_LANGFLOW_LIBRARY_ROOT = (Resolve-Path -LiteralPath $LangflowLibraryRoot).Path
+    $env:TEKNOWRA_LANGFLOW_LOCAL_TEST = 'false'
+}
+
+# 一次性本机接入验证：仅替换专用验收 Agent 的执行器，不写回 env 文件。
+if ($LangflowVerification) {
+    $verificationBindings = @{}
+    if ($env:TEKNOWRA_EINO_AGENTS) {
+        $existingBindings = $env:TEKNOWRA_EINO_AGENTS | ConvertFrom-Json
+        foreach ($property in $existingBindings.PSObject.Properties) {
+            $verificationBindings[$property.Name] = $property.Value
+        }
+    }
+    $verificationBindings['eb6720cc-70f1-4eab-af63-b65e61b96d84'] = 'business-review-multiagent-v1'
+    $env:TEKNOWRA_EINO_AGENTS = $verificationBindings | ConvertTo-Json -Compress
+    $env:TEKNOWRA_LANGFLOW_VERIFY = 'loopback-spike-v1'
+}
+
+# 将本机构建缓存及临时文件留在 D 盘，避免反复编译耗尽系统盘。
+$env:GOCACHE = Join-Path (Split-Path $repo -Parent) '.build-cache\go-build'
+$env:GOTMPDIR = Join-Path (Split-Path $repo -Parent) '.build-cache\go-tmp'
+New-Item -ItemType Directory -Force -Path $env:GOCACHE, $env:GOTMPDIR | Out-Null
+
 # ---- 本地文件存储目录：.env.example 的 /data/files 是容器内路径，本机跑要换 ----
 if (-not $env:LOCAL_STORAGE_BASE_DIR -or $env:LOCAL_STORAGE_BASE_DIR -eq '/data/files') {
     $env:LOCAL_STORAGE_BASE_DIR = Join-Path $repo '.local-data\files'
@@ -63,6 +98,7 @@ Write-Host ""
 # protoregistry.conflictPolicy=warn：与 Makefile/.air.toml 保持一致，
 # 否则重复注册的 proto 会在启动时直接 panic。
 $ldflags = "-X 'google.golang.org/protobuf/reflect/protoregistry.conflictPolicy=warn'"
+if ($TrimDebugInfo) { $ldflags = "-s -w $ldflags" }
 
 # 装了 Air 就用热重载，否则普通模式
 $air = Get-Command air -ErrorAction SilentlyContinue

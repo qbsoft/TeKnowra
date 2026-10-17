@@ -7,14 +7,14 @@ import { renderToString } from 'vue/server-renderer'
 
 let server: ViteDevServer
 let useStream: typeof import('./streame').useStream
-let transport: { requests: Array<{ url: string; options: { body: string } }> }
+let transport: { requests: Array<{ url: string; options: { body: string } }>; setResponse: (value: Response | null) => void }
 const originalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
 before(async () => {
   Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
     getItem: (key: string) => key === 'weknora_token' ? 'test-token' : null,
   } })
   const mocks: Record<string, string> = {
-    '@microsoft/fetch-event-source': `export const requests = []; export async function fetchEventSource(url, options) { requests.push({url, options}); }`,
+    '@microsoft/fetch-event-source': `export const requests = []; let response = null; export const setResponse = value => { response = value }; export async function fetchEventSource(url, options) { requests.push({url, options}); if (response) await options.onopen(response); }`,
     '@/utils/index': `export const generateRandomString = () => 'test-request';`,
     '@/i18n': `export default { global: { t: key => key, locale: { value: 'zh-CN' } } };`,
   }
@@ -39,6 +39,39 @@ after(async () => {
   if (originalStorage) Object.defineProperty(globalThis, 'localStorage', originalStorage)
   else Reflect.deleteProperty(globalThis, 'localStorage')
 })
+
+test('persisted refusal is exposed only for the matching session and cleared by the next request', async () => {
+  let stream!: ReturnType<typeof useStream>
+  await renderToString(createSSRApp({ setup() { stream = useStream(); return () => null } }))
+  try {
+    for (const session of ['other-session', 'session']) {
+      transport.setResponse(new Response(JSON.stringify({ error: { details: {
+        persisted_failure: true, session_id: session, assistant_message_id: 'refusal-message',
+      } } }), { status: 404 }))
+      await stream.startStream({ session_id: 'session', query: 'question', method: 'POST', url: '/api/v1/agent-chat' })
+      assert.equal(stream.error.value, 'HTTP 404')
+      assert.deepEqual(stream.persistedFailure.value, session === 'session'
+        ? { sessionId: 'session', messageId: 'refusal-message' } : null)
+    }
+    transport.setResponse(null)
+    await stream.startStream({ session_id: 'session', query: 'next', method: 'POST', url: '/api/v1/agent-chat' })
+    assert.equal(stream.persistedFailure.value, null)
+  } finally { transport.setResponse(null); stream.stopStream() }
+})
+
+for (const details of [null, { persisted_failure: 'true', session_id: 'session', assistant_message_id: 'x' },
+  { persisted_failure: true, session_id: 'session', assistant_message_id: '' }]) {
+  test(`ordinary or malformed HTTP errors do not invent a stored turn: ${JSON.stringify(details)}`, async () => {
+    let stream!: ReturnType<typeof useStream>
+    await renderToString(createSSRApp({ setup() { stream = useStream(); return () => null } }))
+    try {
+      transport.setResponse(new Response(JSON.stringify({ error: { details } }), { status: 404 }))
+      await stream.startStream({ session_id: 'session', query: 'question', method: 'POST', url: '/api/v1/agent-chat' })
+      assert.equal(stream.persistedFailure.value, null)
+      assert.equal(stream.error.value, 'HTTP 404')
+    } finally { transport.setResponse(null); stream.stopStream() }
+  })
+}
 
 for (const effort of [undefined, '', 'off', 'auto', 'high', 'max']) {
   test(`SSE body carries only explicit reasoning overrides: ${effort}`, async () => {

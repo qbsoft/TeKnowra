@@ -53,6 +53,8 @@ type Options struct {
 	// are set ReasoningEffort wins. true maps to ReasoningAuto, false to
 	// ReasoningOff.
 	Thinking *bool `json:"thinking"`
+	// ThinkingControl selects the wire dialect for this call without changing the stored model.
+	ThinkingControl string `json:"-"`
 	// ReasoningEffort selects the thinking intensity. Empty leaves the model
 	// default untouched (no thinking fields are sent unless the vendor
 	// requires them on every request).

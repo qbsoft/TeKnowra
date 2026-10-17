@@ -1,6 +1,6 @@
 <template>
   <transition name="follow-up-card">
-    <div v-if="suggestionSet?.status === 'ready'" class="follow-ups" aria-live="polite">
+    <div v-if="suggestionSet?.status === 'ready'" v-show="visibleQuestions.length > 0" class="follow-ups" aria-live="polite">
       <div class="follow-ups__header">
         <span class="follow-ups__title">
           <t-icon name="lightbulb" />
@@ -17,7 +17,7 @@
         </div>
       </div>
       <div class="follow-ups__list">
-        <button v-for="item in suggestionSet?.questions || []" :key="item.id" type="button"
+        <button v-for="item in visibleQuestions" :key="item.id" type="button"
           class="follow-ups__item" @click="emit('select', item)">
           <span>{{ item.text }}</span>
           <t-icon name="arrow-up-right" />
@@ -28,7 +28,8 @@
 </template>
 
 <script setup lang="ts">
-import { watch } from 'vue'
+import { computed, watch } from 'vue'
+import { excludeAskedQuestions } from '@/utils/followUpNovelty'
 import { useI18n } from 'vue-i18n'
 import type { MessageSuggestionItem, MessageSuggestionSet } from '@/api/message-suggestion'
 
@@ -36,6 +37,7 @@ const props = defineProps<{
   suggestionSet?: MessageSuggestionSet | null
   loading?: boolean
   allowRegenerate?: boolean
+  askedQuestions?: string[]
 }>()
 const emit = defineEmits<{
   (event: 'select', item: MessageSuggestionItem): void
@@ -45,6 +47,7 @@ const emit = defineEmits<{
 }>()
 const { t } = useI18n()
 const impressed = new Set<string>()
+const visibleQuestions = computed(() => excludeAskedQuestions(props.suggestionSet?.questions || [], props.askedQuestions || []))
 
 watch(
   () => props.suggestionSet,

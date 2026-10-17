@@ -411,6 +411,22 @@ func (c *DockerRemoteClient) Connect(
 			return nil, err
 		}
 	}
+	// Reconnecting an old persisted binding is activity too. Triggering the
+	// sweep before renewing the marker can reap this very container before
+	// the caller's first workspace preparation exec. If it has already gone,
+	// return NotFound here so the lifecycle can replace the binding safely.
+	activity, err := c.Exec(ctx, &dockerSandboxHandle{id: inspected.Container.ID}, RemoteExecRequest{
+		Command: "touch " + dockerActivityMarker,
+		Shell:   true,
+		User:    dockerSandboxPID1User,
+		Timeout: 5 * time.Second,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("refresh reconnected sandbox activity: %w", err)
+	}
+	if activity == nil || activity.ExitCode != 0 || activity.Killed {
+		return nil, dockerInvalidRequest("Connect", "cannot refresh sandbox activity marker")
+	}
 	c.sweepInBackground(ctx)
 
 	var labels map[string]string

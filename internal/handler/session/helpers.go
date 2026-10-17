@@ -312,6 +312,10 @@ func (h *Handler) setupStreamHandler(
 		assistantMessage, h.streamManager, eventBus, h.artifactCollector,
 		h.workspaceCheckpointer, h.sandboxIDLookup,
 	)
+	if assistantMessage != nil {
+		streamHandler.einoDefinitionVersion, _ = h.config.EinoDefinition(assistantMessage.AgentID)
+		_, streamHandler.langflowExecution = h.config.DraftLangflowBinding(assistantMessage.AgentID)
+	}
 	streamHandler.Subscribe()
 	return streamHandler
 }

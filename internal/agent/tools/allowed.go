@@ -64,6 +64,13 @@ func CheckAllowedTools(stored, requested []string) AllowedToolsCheck {
 			check.Dropped = append(check.Dropped, name)
 			continue
 		}
+		// TeKnowra stores per-agent MCP grants alongside built-ins. These
+		// identifiers are resolved and checked by the runtime MCP catalog;
+		// they cannot be found in the static built-in tool definitions.
+		if _, _, ok := ParseAgentMCPToolKey(name); ok {
+			check.Tools = append(check.Tools, name)
+			continue
+		}
 		if _, ok := selectable[name]; !ok {
 			if _, kept := already[name]; !kept {
 				check.Rejected = append(check.Rejected, name)

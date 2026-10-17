@@ -1,7 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1120" viewBox="0 0 1440 1120" role="img" aria-labelledby="title desc">
-<title id="title">TeKnowra 企业 Agent 双引擎架构</title><desc id="desc">Casdoor提供平台OIDC和业务CAS认证，TeKnowra控制身份与资源，Langflow和Eino通过能力桥使用模型知识技能与本人MCP，CRM问数经AskGateway调用Wren。</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1300" viewBox="0 0 1440 1300" role="img" aria-labelledby="title desc">
+<title id="title">TeKnowra 企业 Agent 双引擎架构</title><desc id="desc">Casdoor提供平台OIDC和业务CAS认证，TeKnowra控制身份与资源，Langflow和Eino通过能力桥使用模型知识技能与本人MCP，CRM问数经AskGateway调用Wren；授权分析快照经MCP送入独立DoWhy计算环境。</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#52677d"/></marker><style>text{font-family:'Microsoft YaHei','Noto Sans CJK SC',sans-serif;fill:#23364a}.t{font-size:21px;font-weight:700}.s{font-size:16px}.small{font-size:14px}.box{fill:white;stroke:#b5c8d9;stroke-width:1.5;rx:12}.blue{fill:#edf5ff;stroke:#5c92cc}.green{fill:#eef9f4;stroke:#62a88a}.gold{fill:#fff8e9;stroke:#d0a754}.line{fill:none;stroke:#52677d;stroke-width:2;marker-end:url(#arrow)}.auth{stroke:#8c6bb8;stroke-dasharray:7 5}.label{fill:#4d647d;font-size:14px}</style></defs>
-<rect width="1440" height="1120" fill="#f5f8fc"/>
+<rect width="1440" height="1300" fill="#f5f8fc"/>
 <text x="40" y="40" font-size="28" font-weight="700">TeKnowra 企业 Agent 基础设施</text><text x="40" y="68" class="s">当前本机实现 · Langflow 默认 / Eino 按场景使用 · 2026-10-17</text>
 <rect x="390" y="95" width="650" height="90" class="box gold"/><text x="415" y="127" class="t">Casdoor 统一身份认证</text><text x="415" y="155" class="s">平台：OIDC 登录　｜　业务授权：CAS → CRM 本人令牌</text><text x="415" y="176" class="small">确认“你是谁”；不直接授予知识库、CRM 数据或流程编辑权限</text>
 <rect x="40" y="250" width="260" height="130" class="box"/><text x="60" y="285" class="t">研发人员</text><text x="60" y="318" class="s">TeKnowra 配资源、发布</text><text x="60" y="345" class="s">Langflow 画布 / Eino Go</text><text x="60" y="368" class="small">画布当前使用独立研发账号</text>
@@ -20,4 +20,6 @@
 <rect x="390" y="805" width="650" height="95" class="box"/><text x="415" y="840" class="t">持久化与运行保障</text><text x="415" y="871" class="s">平台数据库 / 文件　·　Langflow 发布元数据　·　OAuth 持久存储</text><text x="415" y="893" class="small">双引擎共享活动任务上限；历史保留；中断任务不自动重放</text><path d="M715 722V800" class="line"/>
 <rect x="1120" y="965" width="280" height="112" class="box gold"/><text x="1140" y="999" class="t">Wren 语义查询</text><text x="1140" y="1027" class="s">模型 / 关系 / 指标 / 规则</text><text x="1140" y="1053" class="small">dry-plan → 受控只读查询</text><text x="1140" y="1073" class="small">业务结果按 Golden 与 truth 核对</text><path d="M1260 908V960" class="line"/>
 <rect x="40" y="965" width="1000" height="112" class="box"/><text x="60" y="999" class="t">Wren 开发链：IDE + CLI 内置技能</text><text x="60" y="1030" class="s">generate-mdl 建结构 → enrich-context 审定口径 → validate/build → Golden → CRM 问数</text><text x="60" y="1059" class="small">wren-board 辅助业务审定与试问，不是员工真实 SSO 权限证明；不将数据库连接复制进 Langflow</text><path d="M1040 1020H1115" class="line"/>
+<path d="M1260 1077V1135" class="line"/><text x="650" y="1120" class="label">经营分析：CRM 返回完整授权快照 → MCP 分析工具</text>
+<rect x="390" y="1140" width="1010" height="115" class="box gold"/><text x="415" y="1175" class="t">MCP → 独立 DoWhy 计算环境</text><text x="415" y="1206" class="s">价量机制分解 · 限定模拟经营因果试点 · 不直接连接业务数据库</text><text x="415" y="1235" class="small">结果经 MCP 返回本人任务；不将机制分解或模拟结果当作已验证的真实经营根因</text>
 </svg>

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/rand"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
+	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -36,6 +38,7 @@ const (
 
 // customAgentService implements the CustomAgentService interface
 type customAgentService struct {
+	cfg            *config.Config
 	repo           interfaces.CustomAgentRepository
 	chunkRepo      interfaces.ChunkRepository
 	kbService      interfaces.KnowledgeBaseService
@@ -56,8 +59,10 @@ func NewCustomAgentService(
 	tagRepo interfaces.KnowledgeTagRepository,
 	knowledgeRepo interfaces.KnowledgeRepository,
 	agentShareRepo interfaces.AgentShareRepository,
+	cfg *config.Config,
 ) interfaces.CustomAgentService {
 	return &customAgentService{
+		cfg:            cfg,
 		repo:           repo,
 		chunkRepo:      chunkRepo,
 		kbService:      kbService,
@@ -113,6 +118,9 @@ func (s *customAgentService) CreateAgent(ctx context.Context, agent *types.Custo
 	// Set defaults
 	agent.EnsureDefaults()
 	if err := agent.Config.QuestionSuggestions.Validate(); err != nil {
+		return nil, err
+	}
+	if err := agent.Config.ValidateExecutionEngine(); err != nil {
 		return nil, err
 	}
 
@@ -173,7 +181,7 @@ func (s *customAgentService) GetAgentByID(ctx context.Context, id string) (*type
 	}
 
 	agent.EnsureDefaults()
-	return agent, nil
+	return s.withEffectiveEino(agent), nil
 }
 
 // GetAgentByIDAndTenant retrieves an agent by ID and tenant (for shared agents; does not resolve built-in)
@@ -190,7 +198,7 @@ func (s *customAgentService) GetAgentByIDAndTenant(ctx context.Context, id strin
 		return nil, err
 	}
 	agent.EnsureDefaults()
-	return agent, nil
+	return s.withEffectiveEino(agent), nil
 }
 
 // ListAgents lists all agents for the current tenant (including built-in agents)
@@ -244,7 +252,7 @@ func (s *customAgentService) ListAgents(ctx context.Context) ([]*types.CustomAge
 	// Add custom agents
 	for _, agent := range allAgents {
 		if !types.IsBuiltinAgentID(agent.ID) {
-			result = append(result, agent)
+			result = append(result, s.withEffectiveEino(agent))
 		}
 	}
 
@@ -311,12 +319,18 @@ func (s *customAgentService) UpdateAgent(
 	if err := s.checkSharedAgentKBScope(ctx, existingAgent, agent.Config); err != nil {
 		return nil, err
 	}
+	if _, legacy := s.cfg.EinoDefinition(existingAgent.ID); legacy && agent.Config.ExecutionEngine != "" && agent.Config.ExecutionEngine != "eino" {
+		return nil, fmt.Errorf("该智能体仍有旧Eino绑定，请保留Eino引擎或新建其他引擎智能体")
+	}
 	existingAgent.Config = agent.Config
 	existingAgent.UpdatedAt = time.Now()
 
 	// Ensure defaults
 	existingAgent.EnsureDefaults()
 	if err := existingAgent.Config.QuestionSuggestions.Validate(); err != nil {
+		return nil, err
+	}
+	if err := existingAgent.Config.ValidateExecutionEngine(); err != nil {
 		return nil, err
 	}
 
@@ -1253,4 +1267,19 @@ func isEnglishLocale(locale string) bool {
 		return true
 	}
 	return false
+}
+
+// Enrich an authorized read without changing the stored historical config.
+func (s *customAgentService) withEffectiveEino(a *types.CustomAgent) *types.CustomAgent {
+	if a == nil || a.IsBuiltin || a.Config.ExecutionEngine != "" {
+		return a
+	}
+	definition, ok := s.cfg.EinoDefinition(a.ID)
+	if !ok {
+		return a
+	}
+	clone := *a
+	clone.Config.ExecutionEngine = "eino"
+	clone.Config.EinoDefinition = definition
+	return &clone
 }

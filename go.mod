@@ -93,6 +93,14 @@ require (
 )
 
 require (
+	github.com/eino-contrib/jsonschema v1.0.3 // indirect
+	github.com/goph/emperror v0.17.2 // indirect
+	github.com/nikolalohinski/gonja v1.5.3 // indirect
+	github.com/slongfield/pyfmt v0.0.0-20220222012616-ea85ff4c361f // indirect
+	github.com/yargevad/filepathx v1.0.0 // indirect
+)
+
+require (
 	cloud.google.com/go/auth v0.20.0 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
@@ -134,6 +142,7 @@ require (
 	github.com/cilium/ebpf v0.11.0 // indirect
 	github.com/clbanning/mxj v1.8.4 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
+	github.com/cloudwego/eino v0.9.21
 	github.com/cockroachdb/errors v1.9.1 // indirect
 	github.com/cockroachdb/logtags v0.0.0-20211118104740-dabe8e521a4f // indirect
 	github.com/cockroachdb/redact v1.1.3 // indirect

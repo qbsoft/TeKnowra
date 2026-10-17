@@ -1,0 +1,114 @@
+{
+  "format": 1,
+  "deployment": "REPLACE_NON_PRODUCTION_OR_CUSTOMER_NAME",
+  "roles": [
+    {
+      "role": "app",
+      "required_when": "always",
+      "supplied_by": "M archive",
+      "immutable_reference": "localhost:15000/teknowra/app@sha256:e6723afdc88833a394601fd4155104ec75603ecb0ebffe7405b5e80bfd759b97",
+      "target_endpoint_or_path": "REPLACE",
+      "owner": "REPLACE",
+      "verified": false
+    },
+    {
+      "role": "langflow",
+      "required_when": "always",
+      "supplied_by": "M archive",
+      "immutable_reference": "localhost:15000/teknowra/langflow@sha256:1de65f02e6474df1c5519713d0fb765505ca13915aefbaf007eeb92ab6a657e9",
+      "target_endpoint_or_path": "REPLACE",
+      "owner": "REPLACE",
+      "verified": false
+    },
+    {
+      "role": "postgres",
+      "required_when": "always",
+      "supplied_by": "M archive",
+      "immutable_reference": "localhost:15000/teknowra/postgres@sha256:c6a23bad117d3cbd7cf94923d07d62dbe1d9302125efe28c6786586331708e87",
+      "target_endpoint_or_path": "REPLACE",
+      "owner": "REPLACE",
+      "verified": false
+    },
+    {
+      "role": "redis",
+      "required_when": "always",
+      "supplied_by": "M archive",
+      "immutable_reference": "localhost:15000/teknowra/redis@sha256:56e4f286b852235a50017612fcb0022d5f83416a3cca4db6684f69685708813a",
+      "target_endpoint_or_path": "REPLACE",
+      "owner": "REPLACE",
+      "verified": false
+    },
+    {
+      "role": "frontend",
+      "required_when": "always",
+      "supplied_by": "M frontend archive",
+      "immutable_reference": "sha256:e2db43ba58ba94f4e7f879118810a5b2aabf489f701c2fe33ef5cbfab7122167",
+      "target_endpoint_or_path": "REPLACE",
+      "owner": "REPLACE",
+      "verified": false
+    },
+    {
+      "role": "storage",
+      "required_when": "platform configured",
+      "supplied_by": "customer existing",
+      "immutable_reference": "REPLACE_S3_RECOVERY_POINT_OR_LOCAL_FILES",
+      "target_endpoint_or_path": "REPLACE",
+      "owner": "REPLACE",
+      "verified": false
+    },
+    {
+      "role": "skill-images",
+      "required_when": "script skills enabled",
+      "supplied_by": "private business images archive",
+      "immutable_reference": "REPLACE_ALL_CONFIG_IDS_AND_TAGS",
+      "target_endpoint_or_path": "REPLACE",
+      "owner": "REPLACE",
+      "verified": false
+    },
+    {
+      "role": "docker-endpoint",
+      "required_when": "Docker skills enabled",
+      "supplied_by": "customer managed authenticated endpoint",
+      "immutable_reference": "REPLACE",
+      "target_endpoint_or_path": "REPLACE",
+      "owner": "REPLACE",
+      "verified": false
+    },
+    {
+      "role": "mcp-crm",
+      "required_when": "CRM tools enabled",
+      "supplied_by": "customer existing",
+      "immutable_reference": "REPLACE",
+      "target_endpoint_or_path": "REPLACE",
+      "owner": "REPLACE",
+      "verified": false
+    },
+    {
+      "role": "models",
+      "required_when": "model and retrieval calls",
+      "supplied_by": "customer existing",
+      "immutable_reference": "REPLACE",
+      "target_endpoint_or_path": "REPLACE",
+      "owner": "REPLACE",
+      "verified": false
+    },
+    {
+      "role": "gateway-tls",
+      "required_when": "remote browser access",
+      "supplied_by": "customer existing",
+      "immutable_reference": "REPLACE",
+      "target_endpoint_or_path": "REPLACE",
+      "owner": "REPLACE",
+      "verified": false
+    },
+    {
+      "role": "backup-storage",
+      "required_when": "always",
+      "supplied_by": "customer existing",
+      "immutable_reference": "REPLACE",
+      "target_endpoint_or_path": "REPLACE",
+      "owner": "REPLACE",
+      "verified": false
+    }
+  ]
+}

@@ -6,6 +6,7 @@
     <div ref="contentWrapperRef" class="content-wrapper" :class="{ 'content-wrapper--prompts': currentSection === 'prompts' }">
       <!-- 基础设置 -->
       <div v-show="currentSection === 'basic'" class="section">
+		<LangflowIntegrationPanel v-if="editorMode === 'edit' && editorAgent?.id && !props.readOnly" :agent-id="editorAgent.id" :execution-engine="formData.config.execution_engine || ''" :save-agent="saveLangflowAgentConfig" @bound="langflowBound = $event" />
         <div class="section-header">
           <div class="section-header-title">
             <h2>{{ $t('agent.editor.basicInfo') }}</h2>
@@ -20,6 +21,22 @@
         </div>
 
         <div class="settings-group">
+          <div class="setting-row" v-if="!isBuiltinAgent">
+            <div class="setting-info"><label>执行引擎</label><p class="desc">{{ formData.config.execution_engine === 'eino' ? 'Eino 执行研发已接入的代码流程。选择场景流程并配置资源后保存即可使用。' : 'Langflow 使用可视流程。创建后可创建或关联流程、配置资源并发布；未发布不能试运行。' }}</p></div>
+            <div class="setting-control"><t-select aria-label="执行引擎" :value="formData.config.execution_engine || (langflowBound ? 'langflow' : 'native')" :disabled="langflowBound || props.readOnly" :options="executionCatalog.engines.map(e=>({label:e.name,value:e.id}))" @change="selectExecutionEngine" /></div>
+          </div>
+          <div class="setting-row" v-if="formData.config.execution_engine === 'eino'">
+            <div class="setting-info"><label>Eino 场景流程</label><p class="desc">选择后端已编译发布的场景，再配置模型、指定知识库和所需 MCP 工具。仅支持本工作区只读文本，不支持附件、技能和长期记忆。合同/摘要需指定知识库及知识检索；信用/多专家还需一个按人 OAuth MCP，选择 find_customer、check_customer_access、get_customer_credit_control 三个工具。</p></div>
+            <div class="setting-control"><t-select aria-label="Eino 场景流程" v-model="formData.config.eino_definition" @change="selectEinoScene" :disabled="props.readOnly" :options="executionCatalog.eino_definitions.map(d=>({label:d.name,value:d.id}))" /></div>
+          </div>
+          <div class="setting-row" v-if="formData.config.execution_engine === 'eino'">
+            <div class="setting-info"><label>能力边界与实现版本</label><p class="desc">当前是单次任务，不支持多轮、附件、技能、共享和长期记忆。已有配置不会被自动改写；如历史配置含不支持的选项，请先关闭再保存。</p><p class="desc">{{ selectedEinoDefinition?.implementation_version || '目录尚未加载，暂不能保存' }}</p></div>
+            <t-button v-if="!props.readOnly" variant="outline" @click="clearUnsupportedEinoConfig">关闭不支持的配置</t-button>
+          </div>
+          <div class="setting-row" v-if="effectiveExecutionEngine === 'langflow' && (formData.config.memory_enabled || formData.config.image_upload_enabled || formData.config.web_search_enabled)">
+            <div class="setting-info"><label>需要调整旧配置</label><p class="desc">当前 Langflow 接入不支持长期记忆、图片理解和网络搜索。关闭这些选项后再保存；知识库、附件、技能和流程绑定保持原样。</p></div>
+            <t-button v-if="!props.readOnly" variant="outline" @click="clearUnsupportedLangflowConfig">关闭不支持的配置</t-button>
+          </div>
           <!-- 智能体 ID（用于 API 集成） -->
           <div v-if="editorMode === 'edit' && editorAgent?.id" class="setting-row">
             <div class="setting-info">
@@ -69,7 +86,7 @@
             </div>
             <div class="setting-control">
               <t-radio-group v-model="agentMode" :disabled="isBuiltinAgent" data-guide="agent-create-mode">
-                <t-radio-button value="quick-answer">
+                <t-radio-button value="quick-answer" :disabled="['langflow','eino'].includes(formData.config.execution_engine || '') || langflowBound">
                   {{ $t('agent.type.normal') }}
                 </t-radio-button>
                 <t-radio-button value="smart-reasoning">
@@ -80,7 +97,7 @@
           </div>
 
           <!-- 智能体类型（仅智能推理模式下显示） -->
-          <div v-if="isAgentMode && agentTypePresets.length > 0" class="setting-row setting-row--emphasize"
+          <div v-if="isAgentMode && agentTypePresets.length > 0 && formData.config.execution_engine !== 'eino'" class="setting-row setting-row--emphasize"
             data-guide="agent-create-agent-type">
             <div class="setting-info">
               <label>{{ $t('agentEditor.agentType.label') }}</label>
@@ -145,7 +162,7 @@
               <p class="desc">{{ $t('agentEditor.desc.memoryEnabled') }}</p>
             </div>
             <div class="setting-control">
-              <t-switch v-model="formData.config.memory_enabled" />
+              <t-switch v-model="formData.config.memory_enabled" :disabled="executionSettingUnsupported('memory_enabled')" />
             </div>
           </div>
 
@@ -734,7 +751,7 @@
               <p class="desc">{{ $t('agentEditor.imageUpload.desc') }}</p>
             </div>
             <div class="setting-control">
-              <t-switch v-model="formData.config.image_upload_enabled" />
+              <t-switch v-model="formData.config.image_upload_enabled" :disabled="executionSettingUnsupported('image_upload_enabled')" />
             </div>
           </div>
 
@@ -1589,6 +1606,24 @@
             </div>
           </div>
 
+          <div class="setting-row">
+            <div class="setting-info">
+              <label>禁止会话问答自动入库</label>
+              <p class="desc">该智能体参与后的本会话问答不自动进入聊天历史知识库，也不提取长期记忆。聊天记录仍保留，历史索引不变。</p>
+            </div>
+            <div class="setting-control">
+              <t-switch v-model="formData.config.disable_chat_history_indexing" role="switch" aria-label="禁止会话问答自动入库" :aria-checked="formData.config.disable_chat_history_indexing || formData.config.allow_session_attachments" :disabled="props.readOnly || formData.config.allow_session_attachments" />
+            </div>
+          </div>
+          <div class="setting-row" v-if="formData.config.execution_engine !== 'eino'">
+            <div class="setting-info">
+              <label>Langflow 会话文本附件</label>
+              <p class="desc">复用聊天上传与解析；仅传递本会话预算内完整文本，过期、解析失败或超限会停止执行。可结合授权知识库与技能；计算脚本须由发布绑定审核入口与结构化输入，不导出历史附件。开启后禁止会话问答自动入库，需重新发布。</p>
+            </div>
+            <div class="setting-control">
+              <t-switch v-model="formData.config.allow_session_attachments" role="switch" aria-label="Langflow 会话文本附件" :aria-checked="formData.config.allow_session_attachments" :disabled="props.readOnly" @change="$event && (formData.config.disable_chat_history_indexing = true)" />
+            </div>
+          </div>
           <!-- 支持的文件类型（限制用户可选择的文件类型） -->
           <div v-if="hasKnowledgeBase" class="setting-row">
             <div class="setting-info">
@@ -1891,6 +1926,7 @@ import { useAssistantDataChange } from '@/utils/assistantDataChange';
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue';
 import { useRouter } from 'vue-router';
 import AgentCreateContextualGuide from '@/components/AgentCreateContextualGuide.vue';
+import LangflowIntegrationPanel from '@/components/LangflowIntegrationPanel.vue';
 import {
   AGENT_EDITOR_FOCUS_SECTION_EVENT,
   markContextualGuideDone,
@@ -1904,6 +1940,8 @@ import { useModalShell } from '@/composables/useModalShell'
 import SettingsModalShell from '@/components/SettingsModalShell.vue'
 import {
   createAgent,
+  getExecutionCatalog,
+  type ExecutionCatalog,
   updateAgent,
   listIMChannels,
   type CustomAgent,
@@ -3014,6 +3052,10 @@ const rewriteSystemTextareaRef = ref<any>(null);
 const rewriteUserTextareaRef = ref<any>(null);
 const fallbackPromptTextareaRef = ref<any>(null);
 
+const executionCatalog=ref<ExecutionCatalog>({engines:[],eino_definitions:[]});
+const effectiveExecutionEngine=computed(()=>formData.value.config.execution_engine || (langflowBound.value?'langflow':'native'));
+const executionSettingUnsupported=(setting:string)=>executionCatalog.value.engines.find(e=>e.id===effectiveExecutionEngine.value)?.unsupported_settings.includes(setting) || false;
+const selectedEinoDefinition=computed(()=>executionCatalog.value.eino_definitions.find(d=>d.id===formData.value.config.eino_definition));
 const navItems = computed(() => {
   const items: { key: string; icon: string; label: string; badge?: number }[] = [
     { key: 'basic', icon: 'info-circle', label: t('agent.editor.basicInfo') },
@@ -3042,7 +3084,9 @@ const navItems = computed(() => {
   if (editorMode.value === 'edit' && editorAgent.value?.id && !editorAgent.value?.is_builtin && !authStore.isLiteMode) {
     items.push({ key: 'share', icon: 'share', label: t('knowledgeEditor.sidebar.share') });
   }
-  return items;
+  const engine=formData.value.config.execution_engine || (langflowBound.value?'langflow':'native');
+  const unsupported=executionCatalog.value.engines.find(e=>e.id===engine)?.unsupported_sections || [];
+  return items.filter(item=>!unsupported.includes(item.key));
 });
 
 // 左侧导航分组（参考「头像-设置」的分组方式）
@@ -3080,6 +3124,8 @@ const defaultFormData = {
   description: '',
   is_builtin: false,
   config: {
+    execution_engine: '' as '' | 'native' | 'langflow' | 'eino',
+    eino_definition: '',
     // 基础设置
     agent_mode: 'smart-reasoning' as 'quick-answer' | 'smart-reasoning',
     system_prompt: '',
@@ -3122,6 +3168,8 @@ const defaultFormData = {
     image_storage_provider: '',
     // 附件图片理解 / 扫描件 OCR 开关（默认关闭，避免解析耗时增加）
     attachment_image_understanding: false,
+    disable_chat_history_indexing: false,
+    allow_session_attachments: false,
     // 扫描件 OCR 最大页数（0 = 使用全局默认）
     attachment_ocr_max_pages: 0,
     // 单轮问答等待附件解析完成的最长时间（秒，0 = 使用全局默认）
@@ -3964,6 +4012,8 @@ watch(() => props.visible, async (val) => {
         }
       }
       applyDefaultModelsIfEmpty()
+      // 默认使用可视编排，并复用手选引擎的资源归一化；不影响历史编辑。
+      selectExecutionEngine('langflow');
     }
 
     await syncInstalledSkills()
@@ -4148,6 +4198,7 @@ watch(skillsSelectionMode, (mode) => {
 
 // 监听模式变化，自动调整配置
 watch(agentMode, (val, _oldVal) => {
+  if (formData.value.config.execution_engine === 'eino') return;
   if (val === 'smart-reasoning') {
     // 切换到 Agent 模式，根据知识库配置启用工具。
     // 注意：默认不注入 thinking / todo_write —— 它们用于显式反思或多步计划，
@@ -4220,7 +4271,7 @@ watch(hasKnowledgeBase, (hasKB, oldHasKB) => {
   }
 
   // 初始化期间或非 Agent 模式下不自动调整工具
-  if (isInitializing.value || !isAgentMode.value) return;
+  if (isInitializing.value || !isAgentMode.value || formData.value.config.execution_engine === 'eino') return;
 
   // 保持未设置（使用默认工具）时不补工具，否则保存后会丢掉默认工具。
   if (hasKB && !oldHasKB && !keepAllowedToolsUnset.value) {
@@ -4336,6 +4387,7 @@ const loadDependencies = async () => {
       chatResources.ensureWebSearchProviders(),
       chatResources.ensureSandboxConfigs(),
       editorResources.prefetchAgentEditorDeps(),
+      getExecutionCatalog().then(result=>{executionCatalog.value=result.data;}),
     ]);
 
     if (chatResources.allModels.length > 0) {
@@ -5201,7 +5253,71 @@ const hasPlaceholder = (text: string | undefined, placeholder: string): boolean 
   return text.includes(`{{${placeholder}}}`);
 };
 
+const langflowBound = ref(false);
+watch(() => editorAgent.value?.id, () => { langflowBound.value = false; });
+function selectExecutionEngine(value: unknown) {
+  const engine = value === 'langflow' || value === 'eino' ? value : 'native';
+  formData.value.config.execution_engine = engine;
+  if (engine !== 'eino') formData.value.config.eino_definition = '';
+  if (engine === 'langflow' || engine === 'eino') {
+    formData.value.config.agent_mode = 'smart-reasoning';
+    formData.value.config.memory_enabled = false;
+    formData.value.config.web_search_enabled = false;
+    formData.value.config.image_upload_enabled = false;
+    if (kbSelectionMode.value === 'all') kbSelectionMode.value = 'none';
+  }
+  if (engine === 'eino') {
+    formData.value.config.eino_definition ||= executionCatalog.value.eino_definitions.find(d=>d.knowledge && !d.tools?.length)?.id || '';
+    formData.value.config.allowed_tools = ['knowledge_search'];
+    formData.value.config.sandbox_config_id = '';
+    skillsSelectionMode.value = 'none';
+    formData.value.config.selected_skills = [];
+    mcpSelectionMode.value = 'none';
+    formData.value.config.mcp_services = [];
+    formData.value.config.allow_session_attachments = false;
+    formData.value.config.image_upload_enabled = false;
+    formData.value.config.history_turns = 0;
+    formData.value.config.multi_turn_enabled = false;
+  }
+}
+function selectEinoScene(value: unknown) {
+  const scene = String(value || '');
+  formData.value.config.eino_definition = scene;
+  const definition=executionCatalog.value.eino_definitions.find(d=>d.id===scene);
+  const needsMcp = !!definition?.tools?.length;
+  const selectedMcp = needsMcp ? (formData.value.config.allowed_tools || []).filter((tool: string) => tool.startsWith('mcp:')) : [];
+  formData.value.config.allowed_tools = [...(definition?.knowledge ? ['knowledge_search'] : []), ...selectedMcp];
+  if (!needsMcp) { mcpSelectionMode.value = 'none'; formData.value.config.mcp_services = []; }
+}
+function clearUnsupportedEinoConfig() {
+  formData.value.config.memory_enabled=false;
+  formData.value.config.web_search_enabled=false;
+  formData.value.config.allow_session_attachments=false;
+  formData.value.config.image_upload_enabled=false;
+  formData.value.config.history_turns=0;
+  formData.value.config.multi_turn_enabled=false;
+  formData.value.config.sandbox_config_id='';
+  skillsSelectionMode.value='none';
+  formData.value.config.selected_skills=[];
+}
+function clearUnsupportedLangflowConfig() {
+  formData.value.config.memory_enabled=false;
+  formData.value.config.image_upload_enabled=false;
+  formData.value.config.web_search_enabled=false;
+}
+async function saveLangflowAgentConfig() {
+  if (!editorAgent.value?.id || props.readOnly) throw new Error('请先创建智能体');
+  if (!formData.value.name.trim() || !formData.value.config.model_id || !formData.value.config.system_prompt.trim()) throw new Error('请填写名称、模型和提示词');
+  if (formData.value.config.execution_engine !== 'langflow' && !langflowBound.value) throw new Error('请选择Langflow执行引擎');
+  formData.value.config.execution_engine = 'langflow';
+  if (hostOnly.value) formData.value.config.sandbox_config_id = '';
+  const payload = { ...formData.value, config: serializeAgentPrompts(formData.value.config, promptTemplates.value) };
+  await updateAgent(editorAgent.value.id, payload);
+  modalShell.markClean();
+}
+
 const handleSave = async () => {
+  if (langflowBound.value) formData.value.config.execution_engine='langflow';
   // 验证必填项（内置智能体不验证名称和系统提示词）
   if (!isBuiltinAgent.value) {
     if (!formData.value.name || !formData.value.name.trim()) {

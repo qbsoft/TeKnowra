@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"github.com/Tencent/WeKnora/internal/agent/langflowdef"
+	"github.com/Tencent/WeKnora/internal/agent/langflowrelease"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -18,22 +20,25 @@ import (
 
 // Config 应用程序总配置
 type Config struct {
-	Conversation    *ConversationConfig    `yaml:"conversation"     json:"conversation"`
-	Server          *ServerConfig          `yaml:"server"           json:"server"`
-	KnowledgeBase   *KnowledgeBaseConfig   `yaml:"knowledge_base"   json:"knowledge_base"`
-	Tenant          *TenantConfig          `yaml:"tenant"           json:"tenant"`
-	Auth            *AuthConfig            `yaml:"auth"             json:"auth"`
-	Audit           *AuditConfig           `yaml:"audit"            json:"audit"`
-	OIDCAuth        *OIDCAuthConfig        `yaml:"oidc_auth"        json:"oidc_auth"`
-	Models          []ModelConfig          `yaml:"models"           json:"models"`
-	VectorDatabase  *VectorDatabaseConfig  `yaml:"vector_database"  json:"vector_database"`
-	DocReader       *DocReaderConfig       `yaml:"docreader"        json:"docreader"`
-	StreamManager   *StreamManagerConfig   `yaml:"stream_manager"   json:"stream_manager"`
-	ExtractManager  *ExtractManagerConfig  `yaml:"extract"          json:"extract"`
-	WebSearch       *WebSearchConfig       `yaml:"web_search"       json:"web_search"`
-	PromptTemplates *PromptTemplatesConfig `yaml:"prompt_templates" json:"prompt_templates"`
-	IM              *IMConfig              `yaml:"im"               json:"im"`
-	Agent           *AgentConfig           `yaml:"agent"            json:"agent"`
+	einoDefinitions  map[string]string
+	langflowBindings map[string]langflowdef.Binding
+	langflowReleases *langflowrelease.Store
+	Conversation     *ConversationConfig    `yaml:"conversation"     json:"conversation"`
+	Server           *ServerConfig          `yaml:"server"           json:"server"`
+	KnowledgeBase    *KnowledgeBaseConfig   `yaml:"knowledge_base"   json:"knowledge_base"`
+	Tenant           *TenantConfig          `yaml:"tenant"           json:"tenant"`
+	Auth             *AuthConfig            `yaml:"auth"             json:"auth"`
+	Audit            *AuditConfig           `yaml:"audit"            json:"audit"`
+	OIDCAuth         *OIDCAuthConfig        `yaml:"oidc_auth"        json:"oidc_auth"`
+	Models           []ModelConfig          `yaml:"models"           json:"models"`
+	VectorDatabase   *VectorDatabaseConfig  `yaml:"vector_database"  json:"vector_database"`
+	DocReader        *DocReaderConfig       `yaml:"docreader"        json:"docreader"`
+	StreamManager    *StreamManagerConfig   `yaml:"stream_manager"   json:"stream_manager"`
+	ExtractManager   *ExtractManagerConfig  `yaml:"extract"          json:"extract"`
+	WebSearch        *WebSearchConfig       `yaml:"web_search"       json:"web_search"`
+	PromptTemplates  *PromptTemplatesConfig `yaml:"prompt_templates" json:"prompt_templates"`
+	IM               *IMConfig              `yaml:"im"               json:"im"`
+	Agent            *AgentConfig           `yaml:"agent"            json:"agent"`
 	// FrontendBaseURL is the externally-visible origin of the SPA, used
 	// to compose absolute share-link URLs. Empty falls back to a host-
 	// relative URL ("/register?token=…") which the SPA then resolves
@@ -588,6 +593,12 @@ func LoadConfig() (*Config, error) {
 		return nil, fmt.Errorf("unable to decode config into struct: %w", err)
 	}
 	fmt.Printf("Using configuration file: %s\n", viper.ConfigFileUsed())
+	if err := cfg.loadEinoDefinitions(os.Getenv("TEKNOWRA_EINO_AGENTS")); err != nil {
+		return nil, err
+	}
+	if err := cfg.loadLangflowFile(); err != nil {
+		return nil, err
+	}
 
 	// 加载提示词模板（从目录或配置文件）
 	configDir := filepath.Dir(viper.ConfigFileUsed())

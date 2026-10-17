@@ -102,6 +102,8 @@ const UnlimitedMaxIterations = -1
 // AgentConfig represents the full agent configuration (used at tenant level and runtime)
 // This includes all configuration parameters for agent execution
 type AgentConfig struct {
+	ExecutionEngine string `json:"-"`
+	EinoDefinition  string `json:"-"`
 	// MaxIterations caps ReAct rounds. Zero is unset (filled with a default);
 	// a negative value is unlimited — the loop runs until the model stops,
 	// the user cancels, or another guard fires. See UnlimitedMaxIterations.
@@ -121,7 +123,8 @@ type AgentConfig struct {
 	WebSearchProviderID     string        `json:"web_search_provider_id,omitempty"`     // WebSearchProviderEntity ID (resolved from agent config)
 	MultiTurnEnabled        bool          `json:"multi_turn_enabled"`                   // Whether multi-turn conversation is enabled
 	MemoryEnabled           *bool         `json:"memory_enabled,omitempty"`             // nil inherits workspace
-	SearchTargets           SearchTargets `json:"-"`                                    // Pre-computed unified search targets (runtime only)
+	AllowSessionAttachments bool          `json:"allow_session_attachments"`
+	SearchTargets           SearchTargets `json:"-"` // Pre-computed unified search targets (runtime only)
 	// MCP service selection
 	MCPSelectionMode string   `json:"mcp_selection_mode"` // MCP selection mode: "all", "selected", "none"
 	MCPServices      []string `json:"mcp_services"`       // Selected MCP service IDs (when mode is "selected")
@@ -160,6 +163,11 @@ type AgentConfig struct {
 	// from CustomAgent. A scheduled job records it so a later run knows which
 	// agent to execute as.
 	AgentID string `json:"-"`
+	// Eino callbacks are constructed by the authorized session service only.
+	EinoRevalidate        func(context.Context) (SearchTargets, error)                                   `json:"-"`
+	EinoFilterEvidence    func(context.Context, SearchTargets, []*SearchResult) ([]*SearchResult, error) `json:"-"`
+	RuntimeRevalidate     func(context.Context) (SearchTargets, error)                                   `json:"-"`
+	RuntimeFilterEvidence func(context.Context, SearchTargets, []*SearchResult) ([]*SearchResult, error) `json:"-"`
 
 	// TenantSkills are the skills installed into the selected sandbox config's
 	// snapshot image, already narrowed to the ones this run can actually
@@ -476,8 +484,12 @@ func IsPipelineToolCallID(id string) bool {
 
 // AgentStep represents one iteration of the ReAct loop
 type AgentStep struct {
-	Iteration int    `json:"iteration"` // Iteration number (0-indexed)
-	Thought   string `json:"thought"`   // LLM's reasoning/thinking (Think phase)
+	ImplementationVersion string `json:"implementation_version,omitempty"`
+	RunID                 string `json:"run_id,omitempty"`
+	NodeKey               string `json:"node_key,omitempty"`
+	DefinitionVersion     string `json:"definition_version,omitempty"`
+	Iteration             int    `json:"iteration"` // Iteration number (0-indexed)
+	Thought               string `json:"thought"`   // LLM's reasoning/thinking (Think phase)
 	// UserMessagesBefore records consumed steer rows in delivery order, before
 	// this model response. Unlike timestamps, this remains unambiguous on replay.
 	UserMessagesBefore []string `json:"user_messages_before,omitempty"`
@@ -521,13 +533,14 @@ func (s *AgentStep) GetObservations() []string {
 
 // AgentState tracks the execution state of an agent across iterations
 type AgentState struct {
-	PendingSteerMessages []string        `json:"-"`
-	CurrentRound         int             `json:"current_round"`  // Current round number
-	RoundSteps           []AgentStep     `json:"round_steps"`    // All steps taken so far in the current round
-	IsComplete           bool            `json:"is_complete"`    // Whether agent has finished
-	FinalAnswer          string          `json:"final_answer"`   // The final answer to the query
-	KnowledgeRefs        []*SearchResult `json:"knowledge_refs"` // Collected knowledge references
-	TurnUsage            TokenUsage      `json:"turn_usage"`     // LLM usage accumulated across this turn
+	ExecutionDiagnostics []ExecutionDiagnostic `json:"-"`
+	PendingSteerMessages []string              `json:"-"`
+	CurrentRound         int                   `json:"current_round"`  // Current round number
+	RoundSteps           []AgentStep           `json:"round_steps"`    // All steps taken so far in the current round
+	IsComplete           bool                  `json:"is_complete"`    // Whether agent has finished
+	FinalAnswer          string                `json:"final_answer"`   // The final answer to the query
+	KnowledgeRefs        []*SearchResult       `json:"knowledge_refs"` // Collected knowledge references
+	TurnUsage            TokenUsage            `json:"turn_usage"`     // LLM usage accumulated across this turn
 	// Suspended is set when the run ended waiting on a user prompt.
 	// SuspendedStep is the interrupted round: its thought and the calls
 	// that finished before the blocked one, kept for display.

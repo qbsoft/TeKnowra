@@ -1,0 +1,16 @@
+package einoruntime
+
+import (
+	"context"
+
+	"github.com/cloudwego/eino/compose"
+)
+
+// Starting point for a business that needs authorized retrieval, structured
+// summary, citations and fact audit. Rename this builder and publish its own
+// system prompt. This reuses the existing topology; it does not implement
+// domain-specific decisions. If those are needed, copy knowledge_summary.go
+// and change the business nodes, retaining authorization and output checks.
+func BuildExampleKnowledge(ctx context.Context) (compose.Runnable[string, string], error) {
+	return BuildKnowledgeSummary(ctx)
+}
