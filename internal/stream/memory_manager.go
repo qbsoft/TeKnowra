@@ -94,6 +94,19 @@ func (m *MemoryStreamManager) AppendEvent(
 	return nil
 }
 
+// ResetEvents drops the message's events, keeping its steer events.
+func (m *MemoryStreamManager) ResetEvents(_ context.Context, sessionID, messageID string) error {
+	stream := m.getStream(sessionID, messageID)
+	if stream == nil {
+		return nil
+	}
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	stream.events = make([]interfaces.StreamEvent, 0)
+	stream.lastUpdated = time.Now()
+	return nil
+}
+
 // GetEvents gets events starting from offset
 // Returns: events slice, next offset, error
 func (m *MemoryStreamManager) GetEvents(
@@ -295,6 +308,31 @@ func (m *MemoryStreamManager) ClearLiveRun(
 	defer m.mu.Unlock()
 	if marker, ok := m.liveRuns[sessionID]; ok && marker.assistantMessageID == assistantMessageID {
 		delete(m.liveRuns, sessionID)
+	}
+	return nil
+}
+
+// DropMessageStreams removes event and steer buffers for deleted messages so a
+// later rewind cannot replay or steer a turn that no longer exists.
+func (m *MemoryStreamManager) DropMessageStreams(
+	_ context.Context, sessionID string, messageIDs []string,
+) error {
+	if sessionID == "" || len(messageIDs) == 0 {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sessionMap := m.streams[sessionID]
+	for _, messageID := range messageIDs {
+		if sessionMap != nil {
+			delete(sessionMap, messageID)
+		}
+		if marker, ok := m.liveRuns[sessionID]; ok && marker.assistantMessageID == messageID {
+			delete(m.liveRuns, sessionID)
+		}
+	}
+	if sessionMap != nil && len(sessionMap) == 0 {
+		delete(m.streams, sessionID)
 	}
 	return nil
 }

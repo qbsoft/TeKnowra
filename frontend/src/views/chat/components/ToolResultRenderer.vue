@@ -68,10 +68,27 @@
       :data="toolData as ReadSkillData"
     />
 
+    <ImageViewResult
+      v-else-if="displayType === 'image_view'"
+      :data="toolData as ImageViewData"
+    />
+
     <McpToolResult
       v-else-if="displayType === 'mcp_discovery' || displayType === 'mcp_call'"
       :discovery="displayType === 'mcp_discovery'" :data="toolData"
       :output="output" :arguments="toolArguments" :success="success"
+    />
+
+    <OperationsResult
+      v-else-if="displayType === 'find_operations' || displayType === 'run_operation'"
+      :mode="displayType === 'run_operation' ? 'run' : 'find'"
+      :output="output" :data="toolData" :success="success"
+    />
+
+    <WeKnoraDocResult
+      v-else-if="displayType === 'search_weknora_docs' || displayType === 'read_weknora_doc'"
+      :mode="displayType === 'read_weknora_doc' ? 'read' : 'search'"
+      :output="output" :data="toolData" :success="success"
     />
 
     <!-- Fallback: Display raw output -->
@@ -107,7 +124,8 @@ import type {
   ShellExecData,
   ListSandboxFilesData,
   WriteSandboxFileData,
-  ReadSkillData
+  ReadSkillData,
+  ImageViewData
 } from '@/types/tool-results';
 
 import SearchResults from './tool-results/SearchResults.vue';
@@ -129,6 +147,9 @@ import SandboxFilesResult from './tool-results/SandboxFilesResult.vue';
 import WriteSandboxFileResult from './tool-results/WriteSandboxFileResult.vue';
 import ReadSkillResult from './tool-results/ReadSkillResult.vue';
 import McpToolResult from './tool-results/McpToolResult.vue';
+import ImageViewResult from './tool-results/ImageViewResult.vue';
+import OperationsResult from './tool-results/OperationsResult.vue';
+import WeKnoraDocResult from './tool-results/WeKnoraDocResult.vue';
 
 interface Props {
   success?: boolean;
@@ -162,7 +183,7 @@ const toolArguments = computed(() => props.arguments || {});
     padding: 0 4px;
 
     .fallback-label {
-      font-size: 12px;
+      font-size: var(--app-text-sm);
       color: var(--td-text-color-secondary);
       font-weight: 500;
       line-height: 1.5;
@@ -173,14 +194,14 @@ const toolArguments = computed(() => props.arguments || {});
     position: relative;
     background: var(--td-bg-color-secondarycontainer);
     border: 1px solid var(--td-component-stroke);
-    border-radius: 6px;
+    border-radius: var(--app-radius-sm);
     overflow: hidden;
     margin: 0;
     padding: 0;
 
     .detail-output {
       font-family: var(--app-font-family-mono);
-      font-size: 12px;
+      font-size: var(--app-text-sm);
       color: var(--td-text-color-primary);
       padding: 16px;
       margin: 0;
@@ -201,12 +222,12 @@ const toolArguments = computed(() => props.arguments || {});
 
       &::-webkit-scrollbar-track {
         background: var(--td-bg-color-secondarycontainer);
-        border-radius: 4px;
+        border-radius: var(--app-radius-xs);
       }
 
       &::-webkit-scrollbar-thumb {
         background: var(--td-component-border);
-        border-radius: 4px;
+        border-radius: var(--app-radius-xs);
 
         &:hover {
           background: var(--td-text-color-placeholder);

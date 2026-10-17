@@ -1,0 +1,4 @@
+# TEMPLATE ONLY: replace every REPLACE value privately; never commit real secrets.
+POSTGRES_USER=teknowra
+POSTGRES_PASSWORD=REPLACE_WITH_RANDOM_SECRET
+POSTGRES_DB=teknowra

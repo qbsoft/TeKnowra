@@ -72,6 +72,20 @@ func TestDockerIdleSweeperFallsBackToCreationTime(t *testing.T) {
 	require.Empty(t, engine.removed)
 }
 
+func TestDockerIdleSweeperIgnoresInheritedOldImageMarker(t *testing.T) {
+	now := time.Now().UTC()
+	sweeper, engine := newSweeperFixture(t, 30*time.Minute, now, []container.Summary{
+		{ID: "cold-start", State: "running", Created: now.Add(-time.Second).Unix(),
+			Labels: map[string]string{dockerManagedLabel: "true"}},
+	})
+	// A skill snapshot may contain this file before PID 1 touches it again.
+	engine.statResult[dockerActivityMarker] = container.PathStat{Mtime: now.Add(-24 * time.Hour)}
+	reclaimed, err := sweeper.sweep(context.Background())
+	require.NoError(t, err)
+	require.Zero(t, reclaimed, "an image timestamp cannot make a new container idle")
+	require.Empty(t, engine.removed)
+}
+
 // The marker has to be writable by the account the execs run as, so a script
 // can backdate or postdate it. Postdating is the dangerous direction: a
 // single `touch -d 2099-01-01` would otherwise exempt the container from
@@ -203,4 +217,25 @@ func TestDockerIdleSweeperContinuesAfterDeleteFailure(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, reclaimed)
 	require.Len(t, engine.removed, 2, "every candidate is attempted")
+}
+
+func TestRestoredDockerConnectRefreshesActivityBeforeIdleSweep(t *testing.T) {
+	now := time.Now().UTC()
+	sweeper, engine := newSweeperFixture(t, 30*time.Minute, now, []container.Summary{
+		{ID: "restored", State: "running", Created: now.Add(-4 * time.Hour).Unix(), Labels: map[string]string{dockerManagedLabel: "true"}},
+	})
+	engine.inspect["restored"] = container.InspectResponse{ID: "restored", State: &container.State{Status: "running"}}
+	engine.statHook = func(string) (container.PathStat, bool) {
+		// A real daemon changes this mtime when the reconnect's refresh exec runs.
+		if len(engine.execOptions) > 0 {
+			return container.PathStat{Mtime: now}, true
+		}
+		return container.PathStat{Mtime: now.Add(-2 * time.Hour)}, true
+	}
+	_, err := sweeper.client.Connect(context.Background(), RemoteConnectRequest{SandboxID: "restored"})
+	require.NoError(t, err)
+	reclaimed, err := sweeper.sweep(context.Background())
+	require.NoError(t, err)
+	require.Zero(t, reclaimed, "reconnecting an old binding must renew activity before any sweep")
+	require.Empty(t, engine.removed)
 }

@@ -4,6 +4,7 @@ import { storeToRefs } from 'pinia';
 import { useRoute, useRouter } from 'vue-router';
 import { onBeforeRouteUpdate } from 'vue-router';
 import { MessagePlugin } from "tdesign-vue-next";
+import type { SendMessageOptions } from '@/utils/questionOrigin';
 import { useSettingsStore } from '@/stores/settings';
 import { useBrowserConnectionStore } from '@/stores/browserConnection';
 import { useUIStore } from '@/stores/ui';
@@ -29,6 +30,8 @@ import {
 import { type CustomAgent, BUILTIN_QUICK_ANSWER_ID, BUILTIN_SMART_REASONING_ID } from '@/api/agent';
 import { useChatResourcesStore } from '@/stores/chatResources';
 import { useEditorResourcesStore } from '@/stores/editorResources';
+import { useDeploymentCapabilitiesStore } from '@/stores/deploymentCapabilities';
+import { hostSkillsOnly, mentionSkillTargetId } from '@/utils/skillTarget';
 import { useI18n } from 'vue-i18n';
 import AttachmentUpload, { type AttachmentFile } from './AttachmentUpload.vue';
 import {
@@ -51,6 +54,8 @@ import {
 } from '@/utils/agent-readiness';
 import { formatLocalizedList } from '@/utils/format-list';
 import { SKILL_ICON, type MentionItem, type MentionItemType, type MentionRequestItem } from '@/types/mention';
+import { toolboxLocation } from '@/config/toolbox';
+import { supportedLevels, levelLabelKey, levelFromLegacy, clampLevel, type ReasoningLevel } from '@/utils/reasoningEffort';
 
 const route = useRoute();
 const router = useRouter();
@@ -61,6 +66,7 @@ const orgStore = useOrganizationStore();
 const menuStore = useMenuStore();
 const chatResources = useChatResourcesStore();
 const editorResources = useEditorResourcesStore();
+const deploymentCapabilities = useDeploymentCapabilitiesStore();
 const {
   agents,
   disabledOwnAgentIds,
@@ -242,7 +248,7 @@ const sharedAgentKbList = ref<Array<{ id: string; name: string; type?: string; k
 // 知识库：用新智能体配置的列表替换当前选中，使已选与可@列表一致（含共享智能体）
 watch([selectedAgentId, agentKnowledgeBases, agentKBSelectionMode], ([newAgentId, newAgentKbs, newKbMode], [oldAgentId]) => {
   if (settingsStore._isApplyingSessionState) return;
-  if (newAgentId !== oldAgentId && oldAgentId !== undefined) {
+  if (newAgentId !== oldAgentId && oldAgentId !== undefined && !props.embeddedMode) {
     if (newKbMode === 'none') {
       settingsStore.selectKnowledgeBases([]);
     } else {
@@ -306,6 +312,8 @@ const isKnowledgeBaseDisabledByAgent = computed(() => {
   return agentKBSelectionMode.value === 'none';
 });
 const isMentionDisabled = computed(() => {
+  // The host pins the scope; @-mentions would edit the main chat's selection.
+  if (props.embeddedMode) return true;
   if (settingsStore.isAgentStreamMode && isKnowledgeBaseDisabledByAgent.value) {
     return agentMCPSelectionMode.value === 'none' && agentSkillsSelectionMode.value === 'none';
   }
@@ -373,7 +381,7 @@ const isSkillAllowedByAgent = (skillName: string) => {
 
 // 切换智能体时清理不允许的 MCP / Skill @mention
 watch([selectedAgentId, agentMCPSelectionMode, agentSkillsSelectionMode], ([newAgentId], [oldAgentId]) => {
-  if (settingsStore._isApplyingSessionState) return;
+  if (props.embeddedMode || settingsStore._isApplyingSessionState) return;
   if (newAgentId === oldAgentId || oldAgentId === undefined) return;
 
   const mcpMode = agentMCPSelectionMode.value;
@@ -506,6 +514,10 @@ const sharedAgentOrgName = computed(() => {
 });
 
 const props = defineProps({
+  compact: {
+    type: Boolean,
+    default: false
+  },
   autoFocus: {
     type: Boolean,
     default: false
@@ -513,6 +525,10 @@ const props = defineProps({
   isReplying: {
     type: Boolean,
     required: false
+  },
+  composerLocked: {
+    type: Boolean,
+    default: false
   },
   sessionId: {
     type: String,
@@ -525,6 +541,19 @@ const props = defineProps({
   embeddedMode: {
     type: Boolean,
     default: false
+  },
+  // Embedded only: the host owns the model choice (v-model:model-id) so the
+  // main chat's pick is neither read nor overwritten. '' follows
+  // defaultModelId.
+  modelId: {
+    type: String,
+    default: ''
+  },
+  // Embedded only: the model used while modelId is empty, normally the open
+  // knowledge base's chat model. Falls back to the first available model.
+  defaultModelId: {
+    type: String,
+    default: ''
   },
   queuedSteers: {
     type: Array as PropType<SteerQueueItem[]>,
@@ -719,35 +748,6 @@ const modelDropdownStyle = ref<Record<string, string>>({});
 const displayedKbs = computed(() => selectedKbs.value.slice(0, 2));
 const remainingCount = computed(() => Math.max(0, selectedKbs.value.length - 2));
 
-// 根据不同状态组合计算输入框的 placeholder
-const inputPlaceholder = computed(() => {
-  // 如果选择了自定义智能体
-  if (isCustomAgent.value && selectedAgent.value) {
-    // 有描述时显示描述，否则显示"向 [名称] 提问"
-    if (selectedAgent.value.description) {
-      return selectedAgent.value.description;
-    }
-    return t('input.placeholderAgent', { name: selectedAgent.value.name });
-  }
-
-  const hasKnowledge = allSelectedItems.value.length > 0;
-  const hasWebSearch = isWebSearchEnabled.value && isWebSearchConfigured.value;
-
-  if (hasKnowledge && hasWebSearch) {
-    // 有知识库 + 有网络搜索
-    return t('input.placeholderKbAndWeb');
-  } else if (hasKnowledge) {
-    // 有知识库 + 无网络搜索
-    return t('input.placeholderWithContext');
-  } else if (hasWebSearch) {
-    // 无知识库 + 有网络搜索
-    return t('input.placeholderWebOnly');
-  } else {
-    // 无知识库 + 无网络搜索（纯模型对话）
-    return t('input.placeholder');
-  }
-});
-
 // 加载知识库列表（自己的 + 共享的，用于 @ 提及等）
 const loadKnowledgeBases = async (force = false) => {
   try {
@@ -829,14 +829,40 @@ const loadFiles = async () => {
   }
 };
 
+// A shared agent @mentions its OWNER's MCP services; this workspace's service
+// ids match none of its preset, and the backend drops such a mention outright.
+// So the list follows the selected agent and is refetched when it changes.
+const currentAgentScope = computed(() => {
+  const sourceTenantId = settingsStore.selectedAgentSourceTenantId;
+  if (!sourceTenantId || !selectedAgentId.value) return undefined;
+  return { agentId: selectedAgentId.value, sourceTenantId };
+});
+
+const agentScopeKey = (scope?: { agentId: string; sourceTenantId: string | number }) =>
+  scope ? `${scope.sourceTenantId}:${scope.agentId}` : '';
+
+// Guards against a slow response for a previously selected agent overwriting
+// the list with another workspace's services after the user switched away.
+let mcpServicesRequestKey = '';
+
 const loadMCPServices = async () => {
+  const scope = currentAgentScope.value;
+  const requestKey = agentScopeKey(scope);
+  mcpServicesRequestKey = requestKey;
   try {
-    mcpServices.value = await listMCPServices();
+    const list = await listMCPServices(scope);
+    if (mcpServicesRequestKey !== requestKey) return;
+    mcpServices.value = list;
   } catch (error) {
     console.error('Failed to load MCP services:', error);
+    if (mcpServicesRequestKey !== requestKey) return;
     mcpServices.value = [];
   }
 };
+
+watch(currentAgentScope, () => {
+  void loadMCPServices();
+});
 
 watch(selectedFileIds, () => {
   loadFiles();
@@ -863,7 +889,7 @@ const browserSourceUnavailableHint = computed(() => {
 });
 
 const openBrowserConnectionSettings = () => {
-  uiStore.openSettings('browserconnection');
+  void router.push(toolboxLocation('browserconnection'));
 };
 
 const toggleBrowserSource = () => {
@@ -994,7 +1020,7 @@ const loadChatModels = async (force = false) => {
   modelsLoading.value = true;
   try {
     await chatResources.ensureChatModels(force);
-    ensureModelSelection();
+    if (!props.embeddedMode) ensureModelSelection();
   } catch (error) {
     console.error('Failed to load chat models:', error);
     chatResources.invalidate('models');
@@ -1025,7 +1051,7 @@ const ensureModelSelection = () => {
 watch(
   [selectedAgentId, () => settingsStore.selectedAgentSourceTenantId, agentModelId],
   ([, sourceTenantId, newModelId]) => {
-    if (!newModelId || newModelId.trim() === '') return;
+    if (props.embeddedMode || !newModelId || newModelId.trim() === '') return;
 
     const lastPick = readLastChatModelID();
     const isSharedAgent = !!sourceTenantId;
@@ -1067,8 +1093,13 @@ const handleModelChange = (value: string | number | Array<string | number> | und
     return;
   }
   if (val === '__add_model__') {
-    selectedModelId.value = readLastChatModelID();
+    if (!props.embeddedMode) selectedModelId.value = readLastChatModelID();
     handleGoToConversationModels();
+    return;
+  }
+  if (props.embeddedMode) {
+    emit('update:modelId', val === EMBEDDED_AUTO_MODEL ? '' : val);
+    showModelSelector.value = false;
     return;
   }
 
@@ -1092,14 +1123,60 @@ const selectedModel = computed(() => {
   return availableModels.value.find(model => model.id === selectedModelId.value);
 });
 
+// What the composer shows and sends. Embedded, an empty or no longer
+// available pick follows the default, which is resolved to a concrete model
+// here so the label always names the model that will answer.
+const EMBEDDED_AUTO_MODEL = '__auto__';
+const embeddedPickedModel = computed(() => props.modelId
+  ? availableModels.value.find(model => model.id === props.modelId) : undefined);
+const embeddedDefaultModel = computed(() =>
+  availableModels.value.find(model => model.id === props.defaultModelId) || availableModels.value[0]);
+const followsDefaultModel = computed(() => props.embeddedMode && !embeddedPickedModel.value);
+const composerModel = computed(() => {
+  if (!props.embeddedMode) return selectedModel.value;
+  return embeddedPickedModel.value || embeddedDefaultModel.value;
+});
+const composerModelId = computed(() => {
+  if (!props.embeddedMode) return selectedModelId.value;
+  return composerModel.value?.id || '';
+});
+
+const reasoningLevels = computed(() => supportedLevels(selectedModel.value?.capabilities));
+const agentReasoningLevel = computed(() => clampLevel(
+  levelFromLegacy(currentAgentConfig.value?.thinking, currentAgentConfig.value?.reasoning_effort),
+  reasoningLevels.value,
+));
+// Show the effective level while leaving the request unset until the user
+// chooses a different level. Selecting the agent's level restores inheritance.
+const displayedReasoningLevel = computed(() => settingsStore.reasoningEffortOverride || agentReasoningLevel.value);
+const showReasoningSelector = ref(false);
+const selectReasoningLevel = (level: ReasoningLevel) => {
+  settingsStore.reasoningEffortOverride = level === agentReasoningLevel.value ? '' : level;
+  showReasoningSelector.value = false;
+};
+watch([selectedModel, reasoningLevels, () => settingsStore.reasoningEffortOverride, () => settingsStore._isApplyingSessionState], () => {
+  // Wait for model resources during session restoration. Once known, an
+  // unsupported override returns to inheritance instead of inventing a level.
+  if (!settingsStore._isApplyingSessionState && selectedModel.value && settingsStore.reasoningEffortOverride
+    && !reasoningLevels.value.includes(settingsStore.reasoningEffortOverride)) {
+    settingsStore.reasoningEffortOverride = '';
+  }
+}, { immediate: true, flush: 'sync' });
+
 // 模型展示名：本空间列表中有则用名称；若为共享智能体且其 model_id 不在本空间列表中则显示“共享智能体配置的模型”
 const selectedModelDisplayName = computed(() => {
-  if (selectedModel.value) return modelDisplayName(selectedModel.value);
-  if (!selectedModelId.value) return t('input.notConfigured');
+  if (composerModel.value) return modelDisplayName(composerModel.value);
+  if (!selectedModelId.value || props.embeddedMode) return t('input.notConfigured');
   const isSharedAgent = !!settingsStore.selectedAgentSourceTenantId;
   const modelFromAgent = agentModelId.value && agentModelId.value === selectedModelId.value;
   if (isSharedAgent && modelFromAgent) return t('input.sharedAgentModelLabel');
   return t('input.notConfigured');
+});
+
+const modelTriggerTooltip = computed(() => {
+  if (isModelLockedByAgent.value) return t('input.modelLockedByAgent');
+  if (followsDefaultModel.value) return t('input.modelAutoHint');
+  return '';
 });
 
 const modelDisplayName = (model: ModelConfig) => {
@@ -1115,17 +1192,17 @@ const contextWindowTitle = (tokens?: number) => {
 };
 
 const selectedModelContextLabel = computed(() => {
-  if (!selectedModel.value) return '';
-  return formatContextWindow(selectedModel.value.parameters?.context_window);
+  if (!composerModel.value) return '';
+  return formatContextWindow(composerModel.value.parameters?.context_window);
 });
 
 const selectedModelContextIsDefault = computed(() => {
-  return isDefaultContextWindow(selectedModel.value?.parameters?.context_window);
+  return isDefaultContextWindow(composerModel.value?.parameters?.context_window);
 });
 
 const selectedModelContextTitle = computed(() => {
-  if (!selectedModel.value) return '';
-  return contextWindowTitle(selectedModel.value.parameters?.context_window);
+  if (!composerModel.value) return '';
+  return contextWindowTitle(composerModel.value.parameters?.context_window);
 });
 
 const updateModelDropdownPosition = () => {
@@ -1153,7 +1230,7 @@ const updateModelDropdownPosition = () => {
     height: rect.height
   });
 
-  const dropdownWidth = 280;
+  const dropdownWidth = 320;
   const offsetY = 8;
   const { width: vw, height: vh } = cssViewportSize(zoom);
 
@@ -1239,9 +1316,14 @@ const updateModelDropdownPosition = () => {
 
 // Mention Logic
 let lastMentionQuery = '';
+// 关键词变化时旧请求可能晚于新请求返回；只采纳最新一次加载的结果
+let mentionLoadSeq = 0;
 const loadMentionItems = async (q: string, resetIndex = true, append = false) => {
   console.log('[Mention] loadMentionItems called with query:', q, 'append:', append);
 
+  const seq = append ? mentionLoadSeq : ++mentionLoadSeq;
+  const isStale = () => seq !== mentionLoadSeq;
+  const nextGroupCounts: Partial<Record<MentionItemType, number>> = append ? mentionGroupCounts.value : {};
   if (!append) {
     mentionOffset.value = 0;
   }
@@ -1359,7 +1441,7 @@ const loadMentionItems = async (q: string, resetIndex = true, append = false) =>
         orgName: kb.org_name || sharedAgentOrgName.value || undefined
       };
     }));
-    mentionGroupCounts.value.kb = kbItems.length;
+    nextGroupCounts.kb = kbItems.length;
 
     const tagKeyword = q.trim();
     const tagSources = availableKbs;
@@ -1377,7 +1459,7 @@ const loadMentionItems = async (q: string, resetIndex = true, append = false) =>
         }));
       }));
       tagItems = tagResults.flat();
-      mentionGroupCounts.value.tag = tagItems.length;
+      nextGroupCounts.tag = tagItems.length;
     } catch (e) {
       console.error('[Mention] listKnowledgeTags error:', e);
       tagItems = [];
@@ -1393,7 +1475,20 @@ const loadMentionItems = async (q: string, resetIndex = true, append = false) =>
 
     const skillsMode = agentSkillsSelectionMode.value;
     if (skillsMode !== 'none') {
-      await editorResources.ensureSkills(currentAgentConfig.value?.sandbox_config_id);
+      // The scope makes a shared agent's skills resolve in its owner's
+      // workspace, where they are actually installed. Lite agents store no
+      // sandbox config id; their skills live on the host target.
+      await deploymentCapabilities.ensureLoaded();
+      await editorResources.ensureSkills(
+        mentionSkillTargetId(
+          hostSkillsOnly(
+            deploymentCapabilities.isSupported('settings.sandbox.remote'),
+            deploymentCapabilities.isSupported('settings.sandbox.host'),
+          ),
+          currentAgentConfig.value?.sandbox_config_id,
+        ),
+        currentAgentScope.value,
+      );
       skillItems = editorResources.skills
         .filter(skill => isSkillAllowedByAgent(skill.name))
         .map(skill => ({
@@ -1442,6 +1537,7 @@ const loadMentionItems = async (q: string, resetIndex = true, append = false) =>
         fileTypesParam,
         searchOptions
       );
+      if (isStale()) return;
       console.log('[Mention] searchKnowledge response:', res);
       if (res.data && Array.isArray(res.data)) {
         let files = res.data;
@@ -1482,24 +1578,28 @@ const loadMentionItems = async (q: string, resetIndex = true, append = false) =>
         if (!append) {
           const clientFiltered = !!mentionAllowedKbIds.value && fileItems.length < apiPageSize;
           if (!clientFiltered && rawTotal != null) {
-            mentionGroupCounts.value.file = rawTotal;
+            nextGroupCounts.file = rawTotal;
           } else {
-            delete mentionGroupCounts.value.file;
+            delete nextGroupCounts.file;
           }
         }
       }
       mentionHasMore.value = res.has_more || false;
       mentionOffset.value += fileItems.length;
     } catch (e) {
+      if (isStale()) return;
       console.error('[Mention] searchKnowledge error:', e);
       mentionHasMore.value = false;
     } finally {
-      mentionLoading.value = false;
+      if (!isStale()) mentionLoading.value = false;
     }
   } else {
+    if (isStale()) return;
     mentionHasMore.value = false;
   }
 
+  if (isStale()) return;
+  if (!append) mentionGroupCounts.value = nextGroupCounts;
   if (append) {
     // Append file items to existing list
     mentionItems.value = [...mentionItems.value, ...fileItems];
@@ -1523,6 +1623,21 @@ const loadMoreMentionItems = () => {
   if (mentionHasMore.value && !mentionLoading.value) {
     loadMentionItems(lastMentionQuery, false, true);
   }
+};
+
+let mentionSearchTimer: ReturnType<typeof setTimeout> | null = null;
+const onMentionSearchInput = (q: string) => {
+  mentionQuery.value = q;
+  if (mentionSearchTimer) clearTimeout(mentionSearchTimer);
+  mentionSearchTimer = setTimeout(() => {
+    mentionSearchTimer = null;
+    loadMentionItems(q, true);
+  }, 180);
+};
+
+const closeMentionFromPopup = () => {
+  showMention.value = false;
+  void focusInput();
 };
 
 const getTextareaEl = () => {
@@ -1585,10 +1700,8 @@ const onInput = (val: string | InputEvent) => {
       showMention.value = false;
       return;
     }
-    // Only reload if query changed
     if (q !== mentionQuery.value) {
-      mentionQuery.value = q;
-      loadMentionItems(q, true); // Reset index when query changes
+      onMentionSearchInput(q);
     }
   } else {
     if (textBeforeCursor.endsWith('@')) {
@@ -1609,7 +1722,7 @@ const onInput = (val: string | InputEvent) => {
       const rect = rectToCssPx(textarea.getBoundingClientRect(), zoom);
       const { width: vw, height: vh } = cssViewportSize(zoom);
       const scrollTop = textarea.scrollTop;
-      const menuHeight = 320; // 预估最大高度
+      const menuHeight = 380; // 预估最大高度
 
       let left = rect.left + coords.left;
       // Prevent menu from going off-screen horizontally
@@ -1642,6 +1755,7 @@ const onInput = (val: string | InputEvent) => {
         };
       }
 
+      if (mentionSearchTimer) clearTimeout(mentionSearchTimer);
       loadMentionItems("");
     }
   }
@@ -1688,7 +1802,7 @@ const triggerMention = () => {
   const zoom = getRootZoom();
   const rect = rectToCssPx(textarea.getBoundingClientRect(), zoom);
   const { height: vh } = cssViewportSize(zoom);
-  const menuHeight = 320;
+  const menuHeight = 380;
 
   // 判断输入框上方空间
   const spaceAbove = rect.top;
@@ -1711,6 +1825,7 @@ const triggerMention = () => {
     };
   }
 
+  if (mentionSearchTimer) clearTimeout(mentionSearchTimer);
   loadMentionItems("");
 };
 
@@ -1778,6 +1893,7 @@ const removeFile = (id: string) => {
 };
 
 const toggleModelSelector = () => {
+  showReasoningSelector.value = false;
   // 如果智能体锁定了模型，不允许打开选择器
   if (isModelLockedByAgent.value) {
     MessagePlugin.warning(t('input.modelLockedByAgent'));
@@ -1800,6 +1916,8 @@ const toggleModelSelector = () => {
         updateModelDropdownPosition();
         setTimeout(() => {
           updateModelDropdownPosition();
+          document.querySelector('.model-selector-content .model-option.selected')
+            ?.scrollIntoView({ block: 'nearest' });
         }, 50);
       });
     });
@@ -1808,6 +1926,13 @@ const toggleModelSelector = () => {
 
 const closeModelSelector = () => {
   showModelSelector.value = false;
+};
+
+const handleReasoningVisibleChange = (visible: boolean) => {
+  if (!visible) return;
+  closeModelSelector();
+  showMention.value = false;
+  showAgentModeSelector.value = false;
 };
 
 // 关闭 Agent 模式选择器（点击外部）
@@ -1830,8 +1955,11 @@ let scrollHandler: (() => void) | null = null;
 
 onMounted(() => {
   if (props.autoFocus) void focusInput();
-  // Embed 渠道由宿主注入 agent/KB，勿拉取需 JWT 的平台资源
-  if (props.embeddedMode) return;
+  // 嵌入时 agent/KB 由宿主注入，只需模型列表供宿主选择
+  if (props.embeddedMode) {
+    void loadChatModels();
+    return;
+  }
 
   browserConnection.watchStatus();
 
@@ -1911,6 +2039,7 @@ onUnmounted(() => {
   document.removeEventListener('click', closeAgentModeSelector);
   document.removeEventListener('click', closeModelSelector);
   document.removeEventListener('click', closeMentionSelector);
+  if (mentionSearchTimer) clearTimeout(mentionSearchTimer);
   if (resizeHandler) {
     window.removeEventListener('resize', resizeHandler);
   }
@@ -1921,23 +2050,18 @@ onUnmounted(() => {
 
 // 监听路由变化
 watch(() => route.params.kbId, (newKbId) => {
+  if (props.embeddedMode) return;
   if (newKbId && typeof newKbId === 'string' && !selectedKbIds.value.includes(newKbId)) {
     settingsStore.addKnowledgeBase(newKbId);
   }
 });
 
+// 模型 / 联网搜索列表由设置页在写操作后直接写回 chatResources
+// （replaceModels / ensureWebSearchProviders(true)），这里读的是同一份快照，
+// 不再靠「设置弹窗关闭」「离开设置路由」两个信号各强刷一次。
 watch(() => uiStore.showSettingsModal, (visible, prevVisible) => {
-  if (prevVisible && !visible) {
-    loadWebSearchConfig(true);
-    loadChatModels(true);
-    if (!props.embeddedMode) void browserConnection.refresh();
-  }
-});
-
-watch(() => route.path, (path, prev) => {
-  if (prev === '/platform/settings' && path !== '/platform/settings') {
-    loadWebSearchConfig(true);
-    loadChatModels(true);
+  if (prevVisible && !visible && !props.embeddedMode) {
+    void browserConnection.refresh();
   }
 });
 
@@ -1948,7 +2072,8 @@ watch([selectedKbIds, selectedFileIds], ([kbIds, fileIds]) => {
 }, { deep: true });
 
 const emit = defineEmits<{
-  (e: 'send-msg', query: string, modelId: string, mentionedItems: MentionRequestItem[], imageFiles: File[], attachmentFiles: AttachmentFile[]): void;
+  (e: 'send-msg', query: string, modelId: string, mentionedItems: MentionRequestItem[], imageFiles: File[], attachmentFiles: AttachmentFile[], options: SendMessageOptions): void;
+  (e: 'update:modelId', modelId: string): void;
   (e: 'stop-generation'): void;
   (e: 'stop-confirmed'): void;
   (e: 'stop-failed'): void;
@@ -1960,7 +2085,16 @@ const emit = defineEmits<{
   (e: 'retry-steer', steerId: string): void;
 }>();
 
-const createSession = async (val: string, delivery: 'inject' | 'after' = 'after') => {
+// options ride along with this one send only: a send that returns early (or
+// steers into the running turn) drops them instead of leaving them behind.
+const createSession = async (
+  val: string,
+  delivery: 'inject' | 'after' = 'after',
+  options: SendMessageOptions = {},
+) => {
+  if (props.composerLocked) {
+    return;
+  }
   if (!val.trim()) {
     MessagePlugin.info(t('input.messages.enterContent'));
     return;
@@ -1984,7 +2118,8 @@ const createSession = async (val: string, delivery: 'inject' | 'after' = 'after'
       MessagePlugin.warning(t('input.messages.steerHasAttachments'));
       return;
     }
-    const steerMentions: MentionRequestItem[] = allSelectedItems.value.map(item => ({
+    // Embedded scope belongs to the host, including queued and injected turns.
+    const steerMentions: MentionRequestItem[] = (props.embeddedMode ? [] : allSelectedItems.value).map(item => ({
       id: item.id,
       name: item.name,
       type: item.type,
@@ -2015,9 +2150,10 @@ const createSession = async (val: string, delivery: 'inject' | 'after' = 'after'
     return;
   }
 
-  // Embed 渠道由后端绑定 agent/KB，勿走平台侧 agent 列表与就绪校验
+  // 嵌入时 agent/KB 由宿主注入，勿走平台侧 agent 列表与就绪校验。
+  // 模型只用宿主的选择，不能把主对话里选的模型带进来。
   if (props.embeddedMode) {
-    emit('send-msg', val, selectedModelId.value || '', [], [], []);
+    emit('send-msg', val, composerModelId.value, [], [], [], options);
     clearvalue();
     void focusInput();
     return;
@@ -2036,7 +2172,7 @@ const createSession = async (val: string, delivery: 'inject' | 'after' = 'after'
     return;
   }
 
-  if (!chatResources.isFresh('models')) {
+  if (!chatResources.isLoaded('models')) {
     await loadChatModels()
   }
 
@@ -2089,7 +2225,7 @@ const createSession = async (val: string, delivery: 'inject' | 'after' = 'after'
   const imageFiles = uploadedImages.value.map(img => img.file);
   const attachmentFiles = uploadedAttachments.value;
 
-  emit('send-msg', val, selectedModelId.value, mentionedItems, imageFiles, attachmentFiles);
+  emit('send-msg', val, selectedModelId.value, mentionedItems, imageFiles, attachmentFiles, options);
 
   // Clean up image previews
   uploadedImages.value.forEach(img => URL.revokeObjectURL(img.preview));
@@ -2194,7 +2330,7 @@ const toggleAgentModeSelector = () => {
 
   showAgentModeSelector.value = !showAgentModeSelector.value;
   if (showAgentModeSelector.value) {
-    if (!chatResources.isFresh('agents')) {
+    if (!chatResources.isLoaded('agents')) {
       void loadAgents(true);
     }
     // 多次更新位置确保准确
@@ -2211,7 +2347,7 @@ const toggleAgentModeSelector = () => {
 }
 
 const selectAgentMode = async (mode: 'quick-answer' | 'smart-reasoning') => {
-  if (!chatResources.isFresh('models')) {
+  if (!chatResources.isLoaded('models')) {
     await loadChatModels()
   }
 
@@ -2251,7 +2387,7 @@ const handleAgentNotReady = (
 };
 
 const handleSelectAgent = async (agent: CustomAgent, sourceTenantId?: string) => {
-  if (!chatResources.isFresh('models')) {
+  if (!chatResources.isLoaded('models')) {
     await loadChatModels()
   }
 
@@ -2328,6 +2464,7 @@ const steerShortcutLabel = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ Ent
 const firstQueuedSteer = computed(() => props.queuedSteers.find(item =>
   item.delivery === 'after' && !item.pending && !item.promoting && !item.failed));
 const injectCurrentInput = () => {
+  if (props.composerLocked) return;
   if (!props.isReplying || !props.canSteer) return;
   if (query.value.trim()) void createSession(query.value, 'inject');
   else if (firstQueuedSteer.value) emit('promote-steer', firstQueuedSteer.value.steer_id);
@@ -2349,6 +2486,10 @@ const onKeydown = (val: string, event: { e: KeyboardEvent }) => {
     if (event.e.keyCode === 13) { // Enter
       event.e.preventDefault();
       mentionSelectorRef.value?.confirmActive();
+      return;
+    }
+    if (event.e.keyCode === 9 && !event.e.shiftKey) { // Tab
+      if (mentionSelectorRef.value?.enterActiveGroup()) event.e.preventDefault();
       return;
     }
     if (event.e.keyCode === 27) { // Esc
@@ -2377,6 +2518,7 @@ const onKeydown = (val: string, event: { e: KeyboardEvent }) => {
   const delivery = chatSubmitShortcut(event.e, props.isReplying && props.canSteer);
   if (delivery) {
     event.e.preventDefault();
+    if (props.composerLocked) return;
     if (delivery === 'inject' && props.isReplying && props.canSteer) injectCurrentInput();
     else void createSession(val, delivery);
   }
@@ -2619,16 +2761,25 @@ onBeforeRouteUpdate((to, from, next) => {
 
 defineExpose({
   focusInput,
-  triggerSend(text: string) {
+  getComposerModelId: () => composerModelId.value,
+  triggerSend(text: string, options: SendMessageOptions = {}) {
     if (!text.trim()) return;
     query.value = text;
-    nextTick(() => createSession(text));
+    nextTick(() => createSession(text, 'after', options));
+  },
+  /**
+   * Puts text in the composer WITHOUT sending it. Session fork uses this so
+   * the user lands on the branch with the original question ready to edit —
+   * the whole point of branching at a user message.
+   */
+  prefill(text: string) {
+    query.value = text;
   }
 });
 
 </script>
 <template>
-  <div class="answers-input" :class="{ 'is-embedded': embeddedMode }" @drop="onDrop" @dragover="onDragOver">
+  <div class="answers-input" :class="{ 'is-embedded': embeddedMode, 'is-compact': compact }" @drop="onDrop" @dragover="onDragOver">
     <!-- Hidden file input for image upload -->
     <input ref="imageInputRef" type="file" accept="image/jpeg,image/png,image/gif,image/webp" multiple
       style="display:none" @change="handleImageSelect" />
@@ -2673,8 +2824,9 @@ defineExpose({
         @update:files="uploadedAttachments = $event" />
 
       <!-- 选中的知识库和文件标签（显示在输入框内顶部） -->
-      <div v-if="allSelectedItems.length > 0" class="selected-tags-inline">
-        <span v-for="item in allSelectedItems" :key="`${item.type}:${item.id}`" class="mention-chip" :class="[
+      <div v-if="$slots.chips || (!embeddedMode && allSelectedItems.length > 0)" class="selected-tags-inline">
+        <slot name="chips" />
+        <span v-for="item in (embeddedMode ? [] : allSelectedItems)" :key="`${item.type}:${item.id}`" class="mention-chip" :class="[
           getMentionChipClass(item),
           { 'mention-chip--agent': item.isAgentConfigured }
         ]">
@@ -2695,14 +2847,16 @@ defineExpose({
       </div>
 
       <!-- 实际输入框 -->
-      <t-textarea ref="textareaRef" v-model="query" :placeholder="inputPlaceholder" name="description" :autosize="true"
+      <t-textarea ref="textareaRef" v-model="query" :placeholder="t('input.placeholder')" name="description" :autosize="true"
         @keydown="onKeydown" @input="onInput" @compositionstart="onCompositionStart" @compositionend="onCompositionEnd"
         @paste="onPaste" />
 
       <!-- 控制栏按文档流排列，换行时自动撑开容器 -->
       <div class="control-bar" :class="{ 'is-embedded': embeddedMode }">
         <!-- 左侧控制按钮 -->
-        <div class="control-left" v-if="!embeddedMode">
+        <div class="control-left">
+          <!-- 嵌入时宿主已定好 agent/KB，只保留模型选择 -->
+          <template v-if="!embeddedMode">
           <!-- Agent 模式切换按钮 -->
           <div ref="agentModeButtonRef" class="control-btn agent-mode-btn" :class="{
             'is-normal': !isCustomAgent && !isAgentEnabled,
@@ -2839,20 +2993,24 @@ defineExpose({
                   d="M13.5 10V11.5C13.5 12.163 13.7634 12.7989 14.2322 13.2678C14.7011 13.7366 15.337 14 16 14C16.663 14 17.2989 13.7366 17.7678 13.2678C18.2366 12.7989 18.5 12.163 18.5 11.5V10C18.5 7.74566 17.6045 5.58365 16.0104 3.98959C14.4163 2.39553 12.2543 1.5 10 1.5C7.74566 1.5 5.58365 2.39553 3.98959 3.98959C2.39553 5.58365 1.5 7.74566 1.5 10C1.5 12.2543 2.39553 14.4163 3.98959 16.0104C5.58365 17.6045 7.74566 18.5 10 18.5H12"
                   stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
-              <span v-if="allSelectedItems.length > 0" class="kb-count">{{ allSelectedItems.length }}</span>
             </div>
           </t-tooltip>
+          </template>
+
+          <slot name="controls" />
 
           <!-- 模型显示 -->
-          <t-tooltip :content="isModelLockedByAgent ? $t('input.modelLockedByAgent') : ''"
-            :disabled="!isModelLockedByAgent">
+          <t-tooltip :content="modelTriggerTooltip" :disabled="!modelTriggerTooltip">
             <div class="model-display" :class="{ 'agent-controlled': isModelLockedByAgent }">
               <div ref="modelButtonRef" class="model-selector-trigger" @click.stop="toggleModelSelector">
                 <span class="model-selector-name">
                   {{ selectedModelDisplayName }}
                 </span>
+                <span v-if="followsDefaultModel && composerModel" class="model-selector-default">
+                  {{ $t('input.modelAuto') }}
+                </span>
                 <span
-                  v-if="selectedModelContextLabel"
+                  v-else-if="selectedModelContextLabel"
                   class="model-selector-ctx"
                   :class="{ 'is-default': selectedModelContextIsDefault }"
                   :title="selectedModelContextTitle"
@@ -2864,6 +3022,34 @@ defineExpose({
               </div>
             </div>
           </t-tooltip>
+          <t-popup v-if="!embeddedMode && reasoningLevels.length > 0" v-model:visible="showReasoningSelector"
+            trigger="click" placement="top-right" :disabled="composerLocked"
+            :overlay-inner-style="{ padding: '4px', borderRadius: 'var(--app-radius-lg)' }"
+            @visible-change="handleReasoningVisibleChange">
+            <button type="button" class="model-selector-trigger reasoning-effort-trigger"
+              :disabled="composerLocked" :class="{ disabled: composerLocked }"
+              :aria-label="`${$t('modelSettings.debug.reasoningEffort')}: ${$t(levelLabelKey(displayedReasoningLevel))}`"
+              :title="$t('modelSettings.debug.reasoningEffort')" aria-haspopup="menu" :aria-expanded="showReasoningSelector"
+              @keydown.esc="showReasoningSelector = false">
+              <span class="model-selector-name">{{ $t(levelLabelKey(displayedReasoningLevel)) }}</span>
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" class="model-dropdown-arrow"
+                :class="{ rotate: showReasoningSelector }">
+                <path d="M2.5 4.5L6 8L9.5 4.5H2.5Z" />
+              </svg>
+            </button>
+            <template #content>
+              <div class="reasoning-effort-menu" role="menu" :aria-label="$t('modelSettings.debug.reasoningEffort')"
+                @keydown.esc="showReasoningSelector = false">
+                <div class="reasoning-effort-title" role="presentation">{{ $t('modelSettings.debug.reasoningEffort') }}</div>
+                <button v-for="level in reasoningLevels" :key="level" type="button" role="menuitemradio"
+                  class="reasoning-effort-option" :class="{ selected: level === displayedReasoningLevel }"
+                  :aria-checked="level === displayedReasoningLevel" @click="selectReasoningLevel(level)">
+                  <span>{{ $t(levelLabelKey(level)) }}</span>
+                  <t-icon v-if="level === displayedReasoningLevel" name="check" size="14px" />
+                </button>
+              </div>
+            </template>
+          </t-popup>
         </div>
 
         <Teleport to="body">
@@ -2877,12 +3063,23 @@ defineExpose({
                 </button>
               </div>
               <div class="model-selector-content">
-                <div v-for="model in availableModels" :key="model.id" class="model-option"
-                  :class="{ selected: model.id === selectedModelId }" @click="handleModelChange(model.id || '')">
+                <div v-if="embeddedMode && embeddedDefaultModel" class="model-option"
+                  :class="{ selected: followsDefaultModel }"
+                  :title="$t('input.modelAutoHint')" @click="handleModelChange(EMBEDDED_AUTO_MODEL)">
                   <div class="model-option-left">
-                    <div class="model-option-icon">
-                      <t-icon name="chat" size="14px" />
+                    <div class="model-option-name-wrap">
+                      <span class="model-option-name">{{ $t('input.modelFollowDefault') }}</span>
+                      <span class="model-option-raw-name">{{ modelDisplayName(embeddedDefaultModel) }}</span>
                     </div>
+                  </div>
+                  <span class="model-option-check">
+                    <t-icon v-if="followsDefaultModel" name="check" size="14px" />
+                  </span>
+                </div>
+                <div v-for="model in availableModels" :key="model.id" class="model-option"
+                  :class="{ selected: !followsDefaultModel && model.id === composerModelId }"
+                  @click="handleModelChange(model.id || '')">
+                  <div class="model-option-left">
                     <div class="model-option-name-wrap">
                       <span class="model-option-name">{{ modelDisplayName(model) }}</span>
                       <span v-if="model.display_name" class="model-option-raw-name">{{ model.name }}</span>
@@ -2893,6 +3090,9 @@ defineExpose({
                     :class="{ 'is-default': isDefaultContextWindow(model.parameters?.context_window) }"
                     :title="contextWindowTitle(model.parameters?.context_window)"
                   >{{ formatContextWindow(model.parameters?.context_window) }}</span>
+                  <span class="model-option-check">
+                    <t-icon v-if="model.id === composerModelId" name="check" size="14px" />
+                  </span>
                 </div>
                 <div v-if="availableModels.length === 0" class="model-option empty">
                   {{ $t('input.noModel') }}
@@ -2911,7 +3111,7 @@ defineExpose({
           </t-tooltip>
           <t-tooltip v-else :content="`${isReplying && canSteer ? $t('input.steerAfter') : $t('input.send')} · Enter`">
             <button type="button" @click="createSession(query)" class="control-btn send-btn" data-guide="chat-send"
-              :disabled="!query.trim()" :class="{ 'disabled': !query.trim() }"
+              :disabled="!query.trim() || composerLocked" :class="{ 'disabled': !query.trim() || composerLocked }"
               :aria-label="isReplying && canSteer ? $t('input.steerAfter') : $t('input.send')">
               <t-icon name="arrow-up" />
             </button>
@@ -2923,7 +3123,9 @@ defineExpose({
     <!-- Mention Selector -->
     <Teleport to="body">
       <MentionSelector ref="mentionSelectorRef" :visible="showMention" :style="mentionStyle" :items="mentionItems" :hasMore="mentionHasMore"
-        :loading="mentionLoading" :emptyHint="mentionEmptyHint" :query="mentionQuery" :group-counts="mentionGroupCounts" v-model:activeIndex="mentionActiveIndex"
+        :loading="mentionLoading" :emptyHint="mentionEmptyHint" :query="mentionQuery" :searchable="isMentionTriggeredByButton"
+        :group-counts="mentionGroupCounts" v-model:activeIndex="mentionActiveIndex"
+        @update:query="onMentionSearchInput" @close="closeMentionFromPopup"
         @select="onMentionSelect" @loadMore="loadMoreMentionItems" />
     </Teleport>
 
@@ -2972,8 +3174,8 @@ const getImgSrc = (url: string) => {
   box-sizing: border-box;
   max-height: 140px;
   overflow-y: auto;
-  background: var(--td-bg-color-secondarycontainer, #f5f5f5);
-  border: 1px solid var(--td-component-stroke, #dcdcdc);
+  background: var(--td-bg-color-secondarycontainer);
+  border: 1px solid var(--td-component-stroke);
   border-bottom: 0;
   border-radius: 10px 10px 0 0;
 }
@@ -2986,13 +3188,13 @@ const getImgSrc = (url: string) => {
 }
 
 .steer-queue-item + .steer-queue-item {
-  border-top: 1px solid var(--td-component-stroke, #dcdcdc);
+  border-top: 1px solid var(--td-component-stroke);
 }
 
 .steer-queue-text {
   flex: 1;
   min-width: 0;
-  font-size: 13px;
+  font-size: var(--app-text-md);
   line-height: 1.5;
   color: var(--td-text-color-primary);
   white-space: nowrap;
@@ -3009,7 +3211,7 @@ const getImgSrc = (url: string) => {
 
 .steer-queue-icon {
   flex-shrink: 0;
-  font-size: 14px;
+  font-size: var(--app-text-base);
   color: var(--td-text-color-secondary);
 }
 
@@ -3021,17 +3223,16 @@ const getImgSrc = (url: string) => {
   height: 26px;
   padding: 0;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--app-radius-sm);
   background: transparent;
   color: var(--td-text-color-secondary);
-  font-size: 16px;
+  font-size: var(--app-text-xl);
   cursor: pointer;
   &:hover:not(:disabled) { background: var(--td-bg-color-secondarycontainer); color: var(--td-text-color-primary); }
   &:disabled { opacity: 0.4; cursor: default; }
 }
 
-.steer-sending { animation: steer-spin 1s linear infinite; }
-@keyframes steer-spin { to { transform: rotate(360deg); } }
+.steer-sending { animation: wk-spin 1s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .steer-sending { animation: none; } }
 
 /* 富文本输入框容器 */
@@ -3039,13 +3240,13 @@ const getImgSrc = (url: string) => {
   position: relative;
   width: 100%;
   max-width: 960px;
-  background: var(--td-bg-color-container, #FFF);
-  border-radius: 12px;
-  border: 1px solid var(--td-component-stroke, #dcdcdc);
+  background: var(--td-bg-color-container);
+  border-radius: var(--app-radius-xl);
+  border: 1px solid var(--td-component-stroke);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04), 0 8px 16px -4px rgba(0, 0, 0, 0.06);
 
   &:focus-within {
-    border-color: var(--td-brand-color, #07C05F);
+    border-color: var(--td-brand-color);
   }
 }
 
@@ -3054,12 +3255,15 @@ const getImgSrc = (url: string) => {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 5px;
-  padding: 6px 12px 6px;
-  border-bottom: 1px solid var(--td-component-stroke, #dcdcdc);
-  background: var(--td-bg-color-container, #fff);
+  gap: 6px;
+  padding: 12px 16px 0;
+  background: var(--td-bg-color-container);
   border-radius: 11px 11px 0 0;
   /* 与 .rich-input-container 内缘上边圆角一致（12px - 1px 边框） */
+}
+
+.rich-input-container:has(.selected-tags-inline) :deep(.t-textarea__inner) {
+  padding-top: 8px;
 }
 
 .mention-chip {
@@ -3070,12 +3274,12 @@ const getImgSrc = (url: string) => {
   gap: 5px;
   min-height: 26px;
   padding: 3px 7px 3px 6px;
-  border-radius: var(--td-radius-medium, 6px);
+  border-radius: var(--td-radius-medium);
   box-sizing: border-box;
-  font-size: 12px;
+  font-size: var(--app-text-sm);
   font-weight: 500;
   cursor: default;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background var(--app-motion-fast), border-color var(--app-motion-fast);
   line-height: 18px;
 
   &:hover {
@@ -3095,7 +3299,7 @@ const getImgSrc = (url: string) => {
 }
 
 .mention-chip__icon {
-  font-size: 12px;
+  font-size: var(--app-text-sm);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3109,7 +3313,7 @@ const getImgSrc = (url: string) => {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--td-bg-color-secondarycontainer, #f0f2f5);
+  background: var(--td-bg-color-secondarycontainer);
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.06);
   display: flex;
   align-items: center;
@@ -3139,12 +3343,12 @@ const getImgSrc = (url: string) => {
   height: 14px;
   margin-left: 1px;
   border-radius: 50%;
-  font-size: 14px;
+  font-size: var(--app-text-base);
   line-height: 1;
   font-weight: 400;
   cursor: pointer;
   opacity: 0.5;
-  transition: opacity 0.15s, background 0.15s, color 0.15s;
+  transition: opacity var(--app-motion-fast), background var(--app-motion-fast), color var(--app-motion-fast);
   color: currentColor;
   flex-shrink: 0;
 }
@@ -3156,7 +3360,7 @@ const getImgSrc = (url: string) => {
 .mention-chip__remove:hover {
   opacity: 1;
   background: var(--td-bg-color-component);
-  color: var(--td-text-color-primary, #1f2937);
+  color: var(--td-text-color-primary);
 }
 
 /* 标签表面保持中性，仅用图标颜色表达资源类型。 */
@@ -3165,7 +3369,7 @@ const getImgSrc = (url: string) => {
 }
 
 .mention-chip--kb .mention-chip__icon-wrap {
-  color: var(--td-brand-color, #07c05f);
+  color: var(--td-brand-color);
 }
 
 .mention-chip--faq {
@@ -3181,7 +3385,7 @@ const getImgSrc = (url: string) => {
 }
 
 .mention-chip--file .mention-chip__icon-wrap {
-  color: var(--td-text-color-secondary, #6b7280);
+  color: var(--td-text-color-secondary);
 }
 
 .mention-chip--tag,
@@ -3211,10 +3415,10 @@ const getImgSrc = (url: string) => {
 :deep(.t-textarea__inner) {
   width: 100%;
   max-height: 152px !important;
-  min-height: 72px !important;
+  min-height: var(--composer-input-min-height, 72px) !important;
   resize: none;
-  color: var(--td-text-color-primary, #000000e6);
-  font-size: 16px;
+  color: var(--td-text-color-primary);
+  font-size: var(--app-text-xl);
   font-weight: 400;
   line-height: 24px;
   font-family: var(--app-font-family);
@@ -3231,9 +3435,9 @@ const getImgSrc = (url: string) => {
   }
 
   &::placeholder {
-    color: var(--td-text-color-placeholder, #00000066);
+    color: var(--td-text-color-placeholder);
     font-family: var(--app-font-family);
-    font-size: 16px;
+    font-size: var(--app-text-xl);
     font-weight: 400;
     line-height: 24px;
   }
@@ -3241,14 +3445,14 @@ const getImgSrc = (url: string) => {
 
 /* 当没有选中标签时，textarea 样式 */
 .rich-input-container:not(:has(.selected-tags-inline)) :deep(.t-textarea__inner) {
-  border-radius: 12px;
+  border-radius: var(--app-radius-xl);
   padding-top: 16px;
 }
 
 /* 控制栏 */
 .control-bar {
   position: relative;
-  margin: 0 16px 12px;
+  margin: 0 12px 12px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -3263,10 +3467,28 @@ const getImgSrc = (url: string) => {
   }
 }
 
+.answers-input.is-compact {
+  --composer-input-min-height: 56px;
+
+  .rich-input-container :deep(.t-textarea__inner) {
+    padding: 12px 14px;
+  }
+
+  .control-bar {
+    margin: 0 12px 8px;
+    padding-top: 4px;
+  }
+
+  .control-icon {
+    width: 16px;
+    height: 16px;
+  }
+}
+
 .control-left {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   flex: 1;
   flex-wrap: wrap;
   min-width: 0;
@@ -3280,15 +3502,15 @@ const getImgSrc = (url: string) => {
   justify-content: center;
   gap: 4px;
   padding: 6px 10px;
-  border-radius: 6px;
-  color: var(--td-text-color-secondary, #666);
+  border-radius: var(--app-radius-sm);
+  color: var(--td-text-color-secondary);
   cursor: pointer;
-  transition: background 0.12s, color 0.12s;
+  transition: background var(--app-motion-instant), color var(--app-motion-instant);
   user-select: none;
   flex-shrink: 0;
 
   &:hover {
-    background: var(--td-bg-color-secondarycontainer-hover, #e6e6e6);
+    background: var(--td-bg-color-secondarycontainer-hover);
   }
 
   &.disabled {
@@ -3296,18 +3518,21 @@ const getImgSrc = (url: string) => {
     cursor: not-allowed;
 
     &:hover {
-      background: var(--td-bg-color-secondarycontainer, #f5f5f5);
+      background: var(--td-bg-color-secondarycontainer);
     }
   }
 }
 
 .agent-mode-btn {
   height: 28px;
-  padding: 0 10px;
+  padding: 0 8px 0 10px;
+  margin-right: 4px;
+  box-sizing: border-box;
   min-width: auto;
   font-weight: 500;
   position: relative;
-  border: .5px solid var(--td-component-border, #e7e7e7);
+  border-radius: var(--app-radius-pill);
+  background: var(--td-bg-color-secondarycontainer);
 }
 
 .agent-icon {
@@ -3324,15 +3549,15 @@ const getImgSrc = (url: string) => {
   height: 20px;
   border-radius: 5px;
   flex-shrink: 0;
-  color: var(--td-text-color-secondary, #666);
+  color: var(--td-text-color-secondary);
 }
 
 .agent-mode-text {
-  font-size: 13px;
-  color: var(--td-text-color-secondary, #666);
+  font-size: var(--app-text-md);
+  color: var(--td-text-color-secondary);
   font-weight: 500;
   white-space: nowrap;
-  margin: 0 4px;
+  margin: 0 2px;
 }
 
 .control-icon {
@@ -3348,7 +3573,7 @@ const getImgSrc = (url: string) => {
   position: relative;
 
   &:hover:not(.disabled):not(.active) {
-    color: var(--td-text-color-primary, #333);
+    color: var(--td-text-color-primary);
   }
 
   &.active {
@@ -3366,7 +3591,7 @@ const getImgSrc = (url: string) => {
     opacity: 0.85;
 
     &:hover {
-      background: var(--td-bg-color-secondarycontainer, #f5f5f5);
+      background: var(--td-bg-color-secondarycontainer);
     }
 
     &.active:hover {
@@ -3375,31 +3600,9 @@ const getImgSrc = (url: string) => {
   }
 }
 
-.kb-count {
-  position: absolute;
-  top: -2px;
-  right: -2px;
-  z-index: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  box-sizing: border-box;
-  min-width: 14px;
-  height: 14px;
-  padding: 0 3px;
-  border-radius: 7px;
-  background: var(--td-brand-color);
-  color: var(--td-text-color-anti);
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-  pointer-events: none;
-}
-
 .kb-btn-text {
-  font-size: 13px;
-  color: var(--td-text-color-secondary, #666);
+  font-size: var(--app-text-md);
+  color: var(--td-text-color-secondary);
   font-weight: 500;
   white-space: nowrap;
 }
@@ -3418,11 +3621,11 @@ const getImgSrc = (url: string) => {
   align-items: center;
   justify-content: center;
   position: relative;
-  color: var(--td-text-color-secondary, #666);
+  color: var(--td-text-color-secondary);
 
   &:hover {
-    background: var(--td-bg-color-secondarycontainer-hover, #f0f0f0);
-    color: var(--td-text-color-primary, #333);
+    background: var(--td-bg-color-secondarycontainer-hover);
+    color: var(--td-text-color-primary);
   }
 
   &.active {
@@ -3434,9 +3637,9 @@ const getImgSrc = (url: string) => {
     position: absolute;
     top: -2px;
     right: -2px;
-    background: #07C05F;
-    color: #fff;
-    font-size: 10px;
+    background: var(--td-brand-color);
+    color: var(--td-text-color-anti);
+    font-size: var(--app-text-2xs);
     width: 14px;
     height: 14px;
     border-radius: 50%;
@@ -3457,11 +3660,11 @@ const getImgSrc = (url: string) => {
   align-items: center;
   justify-content: center;
   position: relative;
-  color: var(--td-text-color-secondary, #666);
+  color: var(--td-text-color-secondary);
 
   &:hover {
-    background: var(--td-bg-color-secondarycontainer-hover, #f0f0f0);
-    color: var(--td-text-color-primary, #333);
+    background: var(--td-bg-color-secondarycontainer-hover);
+    color: var(--td-text-color-primary);
   }
 
   &.active {
@@ -3473,9 +3676,9 @@ const getImgSrc = (url: string) => {
     position: absolute;
     top: -2px;
     right: -2px;
-    background: #07C05F;
-    color: #fff;
-    font-size: 10px;
+    background: var(--td-brand-color);
+    color: var(--td-text-color-anti);
+    font-size: var(--app-text-2xs);
     width: 14px;
     height: 14px;
     border-radius: 50%;
@@ -3497,9 +3700,9 @@ const getImgSrc = (url: string) => {
   position: relative;
   width: 60px;
   height: 60px;
-  border-radius: 8px;
+  border-radius: var(--app-radius-md);
   overflow: hidden;
-  border: 1px solid var(--td-border-level-1-color, #e7e7e7);
+  border: 1px solid var(--td-border-level-1-color);
 
   .image-preview-thumb {
     width: 100%;
@@ -3519,7 +3722,7 @@ const getImgSrc = (url: string) => {
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 12px;
+    font-size: var(--app-text-sm);
     cursor: pointer;
     line-height: 1;
 
@@ -3536,7 +3739,7 @@ const getImgSrc = (url: string) => {
   background: transparent;
 
   &:hover:not(.disabled):not(.active) {
-    color: var(--td-text-color-primary, #333);
+    color: var(--td-text-color-primary);
   }
 
   &.active {
@@ -3591,14 +3794,14 @@ const getImgSrc = (url: string) => {
 
   &:not(.active) {
     .websearch-icon {
-      color: var(--td-text-color-secondary, #666);
+      color: var(--td-text-color-secondary);
     }
 
     &:hover {
-      background: var(--td-bg-color-secondarycontainer-hover, #f0f0f0);
+      background: var(--td-bg-color-secondarycontainer-hover);
 
       .websearch-icon {
-        color: var(--td-text-color-primary, #333);
+        color: var(--td-text-color-primary);
       }
     }
   }
@@ -3608,7 +3811,7 @@ const getImgSrc = (url: string) => {
     opacity: 0.85;
 
     &:hover {
-      background: var(--td-bg-color-secondarycontainer, #f5f5f5);
+      background: var(--td-bg-color-secondarycontainer);
     }
 
     &.active:hover {
@@ -3620,7 +3823,7 @@ const getImgSrc = (url: string) => {
 :global(.input-field-tooltip) {
   .t-popup__content {
     box-shadow: var(--td-shadow-2);
-    border: .5px solid var(--td-component-border, #e7e7e7);
+    border: .5px solid var(--td-component-border);
   }
 }
 
@@ -3629,8 +3832,8 @@ const getImgSrc = (url: string) => {
   flex-direction: column;
   gap: 6px;
   max-width: 220px;
-  font-size: 12px;
-  color: var(--td-text-color-primary, #333);
+  font-size: var(--app-text-sm);
+  color: var(--td-text-color-primary);
 }
 
 :global(.tooltip-with-link a) {
@@ -3652,7 +3855,7 @@ const getImgSrc = (url: string) => {
   width: 10px;
   height: 10px;
   margin-left: 2px;
-  transition: transform 0.12s;
+  transition: transform var(--app-motion-instant);
 
   &.rotate {
     transform: rotate(180deg);
@@ -3669,8 +3872,9 @@ const getImgSrc = (url: string) => {
   width: 28px;
   height: 28px;
   padding: 0;
+  border-radius: 50%;
   box-sizing: border-box;
-  font-size: 16px;
+  font-size: var(--app-text-xl);
   line-height: 1;
 
   &:focus-visible {
@@ -3688,7 +3892,13 @@ const getImgSrc = (url: string) => {
   }
 
   &.disabled {
-    background-color: var(--td-success-color-light);
+    opacity: 1;
+    background-color: var(--td-bg-color-component);
+    color: var(--td-text-color-placeholder);
+
+    &:hover {
+      background-color: var(--td-bg-color-component);
+    }
   }
 
   img {
@@ -3698,6 +3908,57 @@ const getImgSrc = (url: string) => {
 }
 
 /* 模型显示样式 */
+.model-selector-trigger.reasoning-effort-trigger {
+  flex-shrink: 0;
+  min-width: 0;
+  background: transparent;
+  font: inherit;
+}
+
+.reasoning-effort-menu {
+  min-width: 120px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.reasoning-effort-title {
+  padding: 6px 8px;
+  margin-bottom: 2px;
+  border-bottom: .5px solid var(--td-component-stroke);
+  color: var(--td-text-color-secondary);
+  font-size: var(--app-text-sm);
+  font-weight: 500;
+  line-height: 20px;
+}
+
+.reasoning-effort-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: var(--app-radius-sm);
+  background: transparent;
+  color: var(--td-text-color-secondary);
+  font: inherit;
+  font-size: var(--app-text-sm);
+  line-height: 20px;
+  text-align: left;
+  cursor: pointer;
+
+  &:hover, &:focus-visible {
+    background: var(--td-bg-color-secondarycontainer-hover);
+  }
+
+  &.selected {
+    background: var(--td-bg-color-secondarycontainer);
+    color: var(--td-brand-color);
+  }
+}
+
 .model-display {
   display: flex;
   align-items: center;
@@ -3716,16 +3977,16 @@ const getImgSrc = (url: string) => {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 2px 8px;
-  min-width: 100px;
-  height: 22px;
-  border-radius: 6px;
-  border: .5px solid var(--td-component-border, #e7e7e7);
-  transition: background 0.12s, border-color 0.12s;
+  padding: 0 8px;
+  height: 28px;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: var(--app-radius-sm);
+  transition: background var(--app-motion-instant), border-color var(--app-motion-instant);
   cursor: pointer;
 
   &:hover {
-    background: var(--td-bg-color-secondarycontainer-hover, #e6e6e6);
+    background: var(--td-bg-color-secondarycontainer-hover);
   }
 
   &.disabled {
@@ -3733,16 +3994,16 @@ const getImgSrc = (url: string) => {
     cursor: not-allowed;
 
     &:hover {
-      background: var(--td-bg-color-secondarycontainer, #f5f5f5);
+      background: var(--td-bg-color-secondarycontainer);
     }
   }
 }
 
 .model-selector-name {
   flex: 1;
-  font-size: 12px;
+  font-size: var(--app-text-sm);
   font-weight: 500;
-  color: var(--td-text-color-secondary, #666);
+  color: var(--td-text-color-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3750,9 +4011,9 @@ const getImgSrc = (url: string) => {
 
 .model-selector-ctx {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: var(--app-text-xs);
   font-variant-numeric: tabular-nums;
-  color: var(--td-text-color-placeholder, #999);
+  color: var(--td-text-color-placeholder);
   font-weight: 400;
 
   &.is-default {
@@ -3760,12 +4021,19 @@ const getImgSrc = (url: string) => {
   }
 }
 
+.model-selector-default {
+  flex-shrink: 0;
+  font-size: var(--app-text-xs);
+  color: var(--td-text-color-placeholder);
+  font-weight: 400;
+}
+
 .model-dropdown-arrow {
   width: 10px;
   height: 10px;
-  color: var(--td-text-color-placeholder, #999);
+  color: var(--td-text-color-placeholder);
   flex-shrink: 0;
-  transition: transform 0.12s;
+  transition: transform var(--app-motion-instant);
 
   &.rotate {
     transform: rotate(180deg);
@@ -3773,7 +4041,7 @@ const getImgSrc = (url: string) => {
 }
 
 .model-selector-trigger.disabled .model-dropdown-arrow {
-  color: var(--td-text-color-placeholder, #999);
+  color: var(--td-text-color-placeholder);
 }
 
 .model-selector-overlay {
@@ -3789,7 +4057,7 @@ const getImgSrc = (url: string) => {
   z-index: 10000;
   background: var(--td-bg-color-container);
   border: .5px solid var(--td-component-border);
-  border-radius: 10px;
+  border-radius: var(--app-radius-lg);
   box-shadow: var(--td-shadow-2);
   overflow: hidden;
   display: flex;
@@ -3817,10 +4085,10 @@ const getImgSrc = (url: string) => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 10px;
+  padding: 8px 8px 8px 16px;
   border-bottom: .5px solid var(--td-component-stroke);
   background: var(--td-bg-color-container);
-  font-size: 12px;
+  font-size: var(--app-text-sm);
   font-weight: 500;
   color: var(--td-text-color-secondary);
 }
@@ -3840,17 +4108,17 @@ const getImgSrc = (url: string) => {
   align-items: center;
   gap: 4px;
   padding: 2px 8px;
-  border-radius: 6px;
+  border-radius: var(--app-radius-sm);
   border: .5px solid transparent;
   background: transparent;
   color: var(--td-brand-color);
-  font-size: 12px;
+  font-size: var(--app-text-sm);
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.12s;
+  transition: all var(--app-motion-instant);
 
   .add-icon {
-    font-size: 14px;
+    font-size: var(--app-text-base);
     line-height: 1;
     font-weight: 400;
   }
@@ -3868,17 +4136,22 @@ const getImgSrc = (url: string) => {
   gap: 8px;
   padding: 6px 8px;
   cursor: pointer;
-  transition: background 0.12s;
-  border-radius: 6px;
-  margin-bottom: 4px;
+  transition: background var(--app-motion-instant);
+  border-radius: var(--app-radius-sm);
+  margin-bottom: 2px;
 
   &:last-child {
     margin-bottom: 0;
   }
 
-  &:hover,
-  &.selected {
+  &:hover {
     background: var(--td-bg-color-secondarycontainer);
+  }
+
+  &.selected .model-option-name,
+  &.selected .model-option-check {
+    color: var(--td-brand-color);
+    font-weight: 500;
   }
 
   &.empty {
@@ -3901,14 +4174,13 @@ const getImgSrc = (url: string) => {
   flex: 1;
 }
 
-.model-option-icon {
-  width: 16px;
-  height: 16px;
+.model-option-check {
+  width: 14px;
+  height: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  color: var(--td-text-color-secondary);
 }
 
 .model-option-name-wrap {
@@ -3920,7 +4192,7 @@ const getImgSrc = (url: string) => {
 }
 
 .model-option-name {
-  font-size: 12px;
+  font-size: var(--app-text-sm);
   color: var(--td-text-color-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -3929,19 +4201,16 @@ const getImgSrc = (url: string) => {
 }
 
 .model-option-raw-name {
-  font-size: 11px;
+  font-size: var(--app-text-xs);
   color: var(--td-text-color-placeholder);
   flex-shrink: 0;
 }
 
 .model-option-ctx {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: var(--app-text-xs);
   font-variant-numeric: tabular-nums;
-  color: var(--td-text-color-secondary);
-  background: var(--td-bg-color-secondarycontainer);
-  padding: 0 6px;
-  border-radius: 4px;
+  color: var(--td-text-color-placeholder);
   line-height: 18px;
 
   &.is-default {
@@ -3961,10 +4230,10 @@ const getImgSrc = (url: string) => {
 .agent-mode-selector-dropdown {
   position: fixed !important;
   z-index: 9999;
-  background: var(--td-bg-color-container, #fff);
-  border-radius: 10px;
-  box-shadow: var(--td-shadow-2, 0 6px 28px rgba(15, 23, 42, 0.08));
-  border: 1px solid var(--td-component-border, #e7e9eb);
+  background: var(--td-bg-color-container);
+  border-radius: var(--app-radius-lg);
+  box-shadow: var(--td-shadow-2);
+  border: 1px solid var(--td-component-border);
   overflow: hidden;
   padding: 6px 8px;
   min-width: 200px;
@@ -3981,13 +4250,13 @@ const getImgSrc = (url: string) => {
   justify-content: space-between;
   padding: 8px 10px;
   cursor: pointer;
-  transition: background 0.12s;
-  border-radius: 6px;
+  transition: background var(--app-motion-instant);
+  border-radius: var(--app-radius-sm);
   position: relative;
   margin: 4px 6px;
 
   &:hover:not(.disabled) {
-    background: var(--td-bg-color-container-hover, #f6f8f7);
+    background: var(--td-bg-color-container-hover);
   }
 
   &.disabled {
@@ -4000,7 +4269,7 @@ const getImgSrc = (url: string) => {
   }
 
   &.selected {
-    background: var(--td-brand-color-light, #eefdf5);
+    background: var(--td-brand-color-light);
 
     .agent-mode-option-name {
       color: var(--td-success-color);
@@ -4018,16 +4287,16 @@ const getImgSrc = (url: string) => {
 }
 
 .agent-mode-option-name {
-  font-size: 12px;
+  font-size: var(--app-text-sm);
   font-weight: 600;
-  color: var(--td-text-color-primary, #222);
+  color: var(--td-text-color-primary);
   line-height: 1.4;
-  transition: color 0.12s;
+  transition: color var(--app-motion-instant);
 }
 
 .agent-mode-option-desc {
-  font-size: 11px;
-  color: var(--td-text-color-secondary, #8b9196);
+  font-size: var(--app-text-xs);
+  color: var(--td-text-color-secondary);
   line-height: 1.3;
 }
 
@@ -4046,26 +4315,26 @@ const getImgSrc = (url: string) => {
 
   .warning-icon {
     color: var(--td-warning-color);
-    font-size: 14px;
+    font-size: var(--app-text-base);
   }
 }
 
 .agent-mode-footer {
   padding: 6px 10px;
-  border-top: 1px solid var(--td-component-border, #f2f4f5);
+  border-top: 1px solid var(--td-component-border);
   margin-top: 2px;
-  background: var(--td-bg-color-secondarycontainer, #fafcfc);
+  background: var(--td-bg-color-secondarycontainer);
 }
 
 .agent-mode-link {
   color: var(--td-success-color);
   text-decoration: none;
-  font-size: 11px;
+  font-size: var(--app-text-xs);
   font-weight: 500;
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  transition: all 0.12s;
+  transition: all var(--app-motion-instant);
 
   &:hover {
     color: var(--td-brand-color-active);

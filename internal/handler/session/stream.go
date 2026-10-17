@@ -27,7 +27,7 @@ import (
 // @Param        session_id     path      string  true   "会话ID"
 // @Param        message_id     query     string  true   "消息ID"
 // @Param        resource_urls  query     string  false  "文件引用形式，public 返回可加载直链"  Enums(handle, public)  default(handle)
-// @Success      200            {object}  map[string]interface{}  "流式响应"
+// @Success      200            {string}  string  "SSE 事件流"
 // @Failure      404         {object}  errors.AppError         "会话或消息不存在"
 // @Security     Bearer
 // @Security     ApiKeyAuth
@@ -119,6 +119,18 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 		c.Error(errors.NewInternalServerError(fmt.Sprintf("Failed to get stream data: %s", err.Error())))
 		return
 	}
+	ended, err := h.finishAbandonedEinoRun(ctx, message, events)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("无法核实任务执行状态，请稍后重试。"))
+		return
+	}
+	if ended {
+		events, currentOffset, err = h.streamManager.GetEvents(ctx, sessionID, messageID, 0)
+		if err != nil {
+			c.Error(errors.NewInternalServerError("无法读取任务中断记录，请重新打开会话。"))
+			return
+		}
+	}
 
 	if len(events) == 0 {
 		logger.Warnf(ctx, "No events found in stream, session ID: %s, message ID: %s", sessionID, messageID)
@@ -138,7 +150,7 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 	setSSEHeaders(c)
 
 	// Check if stream is already completed
-	streamCompleted := false
+	streamCompleted := message.IsCompleted
 	for _, evt := range events {
 		if evt.Type == "complete" {
 			streamCompleted = true
@@ -146,9 +158,10 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 		}
 	}
 
-	// Replay existing events
-	logger.Debugf(ctx, "Replaying %d existing events", len(events))
-	for _, evt := range events {
+	// Replay existing events, a segment's worth of chunks per frame
+	replay := coalesceReplayEvents(events)
+	logger.Debugf(ctx, "Replaying %d existing events as %d frames", len(events), len(replay))
+	for _, evt := range replay {
 		emitStreamEvent(ctx, c, evt, message.RequestID, resourceRewriter)
 	}
 

@@ -194,6 +194,12 @@ func (s *dockerIdleSweeper) lastActivity(
 				summary.ID, marker.Format(time.RFC3339),
 			)
 		} else {
+			// Skill snapshots can inherit a marker older than this container.
+			// State.Running may be visible before PID 1 refreshes that file;
+			// never let an image timestamp make a new sandbox look idle.
+			if summary.StartedAt.After(marker) {
+				return summary.StartedAt.UTC()
+			}
 			return marker
 		}
 	}

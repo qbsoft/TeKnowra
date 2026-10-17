@@ -224,8 +224,10 @@ func TestSkillTreeVerifyCommandQuotesPaths(t *testing.T) {
 func TestVerifySkillTreeIssuesOneCommandRegardlessOfScriptCount(t *testing.T) {
 	fx := newInstallFixture(t)
 	files := map[string][]byte{"SKILL.md": []byte(validSkillMD)}
-	rels := []string{"run.sh", "scripts/a.py", "scripts/b.py",
-		"scripts/c.py", "scripts/d.py", "scripts/e.py"}
+	rels := []string{
+		"run.sh", "scripts/a.py", "scripts/b.py",
+		"scripts/c.py", "scripts/d.py", "scripts/e.py",
+	}
 	for _, rel := range rels {
 		files[rel] = []byte("pass\n")
 	}
@@ -273,8 +275,9 @@ func TestCacheBudgetGuardKeepsSmallWipesBig(t *testing.T) {
 func TestCleanImageScratchCommandShape(t *testing.T) {
 	cmd := cleanImageScratchCommand()
 
-	require.Contains(t, cmd, "rm -rf /workspace/* /tmp/* /workspace/.[!.]* || true",
-		"the scratch wipe covers /tmp too: installers leave archives and locks there")
+	require.Contains(t, cmd, "rm -rf /workspace/* /tmp/* /workspace/.[!.]* /run/desktop || true",
+		"the scratch wipe covers /tmp and /run/desktop: a leftover websockify "+
+			"secret would be reused by every sandbox booted from the snapshot")
 	require.Contains(t, cmd, "mkdir -p")
 	require.Contains(t, cmd, "status=$?")
 	require.Contains(t, cmd, "exit $status")
@@ -747,9 +750,10 @@ func TestInstallSkillRecoversFromNameConflict(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "sk-1", id,
 		"the upload that lost the unique index must reuse the row that won")
-	skill, getErr := fx.skillRepo.GetSkill(context.Background(), 7, "cfg-1", "sk-1")
-	require.NoError(t, getErr)
-	require.Equal(t, types.SkillStatusInstalling, skill.Status)
+	// The install runs in the background and the fixture row already starts at
+	// installing, so an immediate status read raced the goroutine and proved
+	// nothing. The run finishing on the reused row is what shows it was taken.
+	waitBackgroundInstallReady(t, fx, "the install must run on the row that won")
 }
 
 func TestInstallSkillRefusesWhenBundleCannotBeStored(t *testing.T) {
@@ -797,6 +801,25 @@ func TestInstallSkillSkipsWhenReadyWithTheSameArchive(t *testing.T) {
 		"a skip must still attach the install to the workspace catalog")
 }
 
+// waitBackgroundInstallReady waits until the InstallSkill goroutine has
+// finished the fixture run. InstallSkill only queues the work, so reading
+// Status immediately after it returns races: the mock often lands on ready
+// before the test process runs the next line. A skip never writes a new
+// snapshot, so this is also the proof that a retry actually ran.
+func waitBackgroundInstallReady(t *testing.T, fx *installFixture, msgAndArgs ...any) *types.TenantSkillEntity {
+	t.Helper()
+	var skill *types.TenantSkillEntity
+	require.Eventually(t, func() bool {
+		got, err := fx.skillRepo.GetSkill(context.Background(), 7, "cfg-1", "sk-1")
+		if err != nil || got == nil {
+			return false
+		}
+		skill = got
+		return got.Status == types.SkillStatusReady && got.InstalledSnapshotID != ""
+	}, 2*time.Second, 5*time.Millisecond, msgAndArgs...)
+	return skill
+}
+
 func TestInstallSkillRetriesAFailedSkillWithTheSameArchive(t *testing.T) {
 	fx := newInstallFixture(t)
 	archive := zipBundle(t, map[string]string{
@@ -815,10 +838,9 @@ func TestInstallSkillRetriesAFailedSkillWithTheSameArchive(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, "sk-1", id)
-	skill, getErr := fx.skillRepo.GetSkill(context.Background(), 7, "cfg-1", "sk-1")
-	require.NoError(t, getErr)
-	require.Equal(t, types.SkillStatusInstalling, skill.Status,
+	skill := waitBackgroundInstallReady(t, fx,
 		"a failed skill is a retry even when the archive digest is unchanged")
+	require.Empty(t, skill.Error)
 }
 
 // Most failed installs fail for a reason the archive cannot fix, so the retry
@@ -911,9 +933,7 @@ func TestInstallSkillReinstallsWhenTheLiveImageNoLongerCarriesTheSkill(t *testin
 
 	require.NoError(t, err)
 	require.Equal(t, "sk-1", id)
-	skill, getErr := fx.skillRepo.GetSkill(context.Background(), 7, "cfg-1", "sk-1")
-	require.NoError(t, getErr)
-	require.Equal(t, types.SkillStatusInstalling, skill.Status,
+	waitBackgroundInstallReady(t, fx,
 		"a ready row whose files left the image is a repair, not a skip")
 }
 
@@ -989,13 +1009,10 @@ func TestInstallSkillRetriesAStaleInFlightInstallOfTheSameArchive(t *testing.T) 
 
 	require.NoError(t, err)
 	require.Equal(t, "sk-1", id)
-	skill, getErr := fx.skillRepo.GetSkill(context.Background(), 7, "cfg-1", "sk-1")
-	require.NoError(t, getErr)
-	require.Equal(t, types.SkillStatusInstalling, skill.Status)
-	require.NotNil(t, skill.InstallingSince)
-	require.Equal(t, fx.now(), *skill.InstallingSince,
+	skill := waitBackgroundInstallReady(t, fx,
 		"a dead in-flight row must be allowed to start a new run, not wait for the reaper")
 	require.Empty(t, skill.Error)
+	require.Nil(t, skill.InstallingSince)
 }
 
 // The ledger records which skill an install snapshotted, not which archive, so
@@ -1136,9 +1153,7 @@ func TestInstallSkillDoesNotSkipARemovalOfTheSameArchive(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, "sk-1", id)
-	skill, getErr := fx.skillRepo.GetSkill(context.Background(), 7, "cfg-1", "sk-1")
-	require.NoError(t, getErr)
-	require.Equal(t, types.SkillStatusInstalling, skill.Status,
+	waitBackgroundInstallReady(t, fx,
 		"re-uploading during a removal is how the upload cancels it")
 }
 
@@ -1386,6 +1401,20 @@ func TestSortedScriptPathsIsDeterministic(t *testing.T) {
 	require.Equal(t, []string{"scripts/a-main.py", "scripts/mid.js", "scripts/z-helper.py"},
 		sortedScriptPaths(bundle, allScriptExtensions...),
 		"only files the runtime can execute are scripts")
+}
+
+func TestSortedScriptPathsSkipsVendoredTreesAtAnyDepth(t *testing.T) {
+	bundle := &SkillBundle{Files: map[string][]byte{
+		"scripts/main.py":                    []byte("x"),
+		".venv/lib/pkg/a.py":                 []byte("x"),
+		"node_modules/leftpad/index.js":      []byte("x"),
+		"tools/.venv/lib/otherpkg/b.py":      []byte("x"),
+		"sub/package/node_modules/pkg/c.mjs": []byte("x"),
+	}}
+
+	require.Equal(t, []string{"scripts/main.py"},
+		sortedScriptPaths(bundle, allScriptExtensions...),
+		"vendored trees are skipped at the bundle root and nested under subprojects")
 }
 
 type stubWorkspaceSandboxPolicy struct {
@@ -2083,6 +2112,7 @@ func newInstallFixture(t *testing.T) *installFixture {
 		nil,
 		&transcriptStreams{},
 		&transcriptMessages{},
+		HostSandboxManager{},
 	)
 	fx.svc.now = func() time.Time { return time.Date(2026, 8, 19, 9, 30, 0, 0, time.UTC) }
 	return fx
@@ -3102,8 +3132,11 @@ func (s *installCustomAgentService) ListAgents(context.Context) ([]*types.Custom
 }
 
 func (s *installCustomAgentService) UpdateAgent(
-	_ context.Context, agent *types.CustomAgent,
+	_ context.Context, agent *types.CustomAgent, avatar *string,
 ) (*types.CustomAgent, error) {
+	if avatar != nil {
+		agent.Avatar = *avatar
+	}
 	return agent, nil
 }
 
@@ -3191,8 +3224,19 @@ func (e *installAgentEngine) Execute(
 	}
 	return &types.AgentState{IsComplete: true}, nil
 }
-func (e *installAgentEngine) SetMemoryPrompt(string)            {}
-func (e *installAgentEngine) SetSteerSink(sink types.SteerSink) { e.sink = sink }
+func (e *installAgentEngine) SetMemoryPrompt(string)                               {}
+func (e *installAgentEngine) SetSteerSink(sink types.SteerSink)                    { e.sink = sink }
+func (e *installAgentEngine) SetContextCheckpointSink(types.ContextCheckpointSink) {}
+
+func (e *installAgentEngine) EnableSuspension(json.RawMessage) {}
+
+func (e *installAgentEngine) SetInteractive(bool) {}
+
+func (e *installAgentEngine) Resume(context.Context, string, string, []chat.Message,
+	[]byte, *types.AgentPrompt,
+) (*types.AgentState, error) {
+	return nil, errors.New("not supported")
+}
 
 type installSessionService struct {
 	fx *installFixture
@@ -3290,9 +3334,9 @@ func (s *installSessionService) KnowledgeQAByEvent(context.Context, *types.ChatM
 }
 
 func (s *installSessionService) SearchKnowledge(
-	context.Context, []string, []string, []types.TagScope, string,
-) ([]*types.SearchResult, error) {
-	return nil, nil
+	context.Context, []string, []string, []types.TagScope, string, *types.KnowledgeSearchOptions,
+) (*types.RetrievalResult, error) {
+	return &types.RetrievalResult{}, nil
 }
 
 func (s *installSessionService) AgentQA(context.Context, *types.QARequest, *event.EventBus) error {
@@ -3306,6 +3350,10 @@ type installModelService struct {
 }
 
 func (s *installModelService) CreateModel(context.Context, *types.Model) error { return nil }
+func (s *installModelService) CopyModel(context.Context, string, string) (*types.Model, error) {
+	return nil, nil
+}
+
 func (s *installModelService) GetModelByID(context.Context, string) (*types.Model, error) {
 	return nil, nil
 }
@@ -3399,6 +3447,7 @@ func (s installFileService) SaveBytes(_ context.Context, data []byte, _ uint64, 
 	}
 	return "file://bundle.zip", nil
 }
+
 func (s installFileService) GetFile(_ context.Context, ref string) (io.ReadCloser, error) {
 	if s.fx != nil {
 		s.fx.getFileCalls.Add(1)

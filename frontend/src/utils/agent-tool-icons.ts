@@ -22,6 +22,10 @@ export function getAgentToolIconName(
   if (toolName === 'web_search') {
     return 'internet'
   }
+  if (toolName === 'read_document' || toolName === 'list_documents') {
+    return 'file-search'
+  }
+  // Retired names still present in stored chat history
   if (toolName === 'get_document_info' || toolName === 'list_knowledge_chunks') {
     return 'file-search'
   }
@@ -57,6 +61,18 @@ export function getAgentToolIconName(
   }
   if (toolName === 'execute_skill_script') {
     return 'code'
+  }
+  if (toolName === 'find_operations') {
+    return 'task'
+  }
+  if (toolName === 'run_operation') {
+    return 'terminal'
+  }
+  if (toolName === 'search_weknora_docs') {
+    return 'search'
+  }
+  if (toolName === 'read_weknora_doc') {
+    return 'file'
   }
   return 'file-paste'
 }

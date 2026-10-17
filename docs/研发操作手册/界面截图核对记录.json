@@ -1,0 +1,62 @@
+{
+  "date": "2026-10-17",
+  "scope": "现有已登录画布截图与操作说明核对；未编辑字段、更新组件、运行或发布",
+  "before": {
+    "f444fe58-0907-476b-a36a-236476570a56": {
+      "name": "TeKnowra 合同附件＋企业制度＋技能计算 验收草稿",
+      "full_hash": "50b9032519990e5acf757553f738e8e2b2b0fb73c6d34e5c59ed75bbe259c01b",
+      "node_configs": "bf0dd1f52c05a1b5a5748efa94681a2438a133c4f08eca32fe21f35276ed93b3",
+      "edge_configs": "d863847c697d32a3be2188e37603d5c1cd33c112d669b088c9af2c40016e6a47",
+      "nodes": 6,
+      "edges": 5
+    },
+    "60fb3de4-422a-45b6-8d9a-b8f85520d05e": {
+      "name": "TeKnowra draft 合同与信用多专家 Langflow 等价验收",
+      "full_hash": "5790ed4547736fbd7ec031e6edb6d5862bd6fd7ddd8bbdbb2d012b6b240b1282",
+      "node_configs": "7963115fa000b459ed0b8a516ffc3484b674d0f8ac27d33a63ce72bc294c12a6",
+      "edge_configs": "7959a088b8512d9081863316aca8c2ff0098af5296494ac2c928c22859ba6356",
+      "nodes": 9,
+      "edges": 14
+    },
+    "release_store_sha256": "295a3c1ce1c01e9f1d89bee0ee798d0731c6f8845748f1591d1956072cb9cf0f"
+  },
+  "after": {
+    "f444fe58-0907-476b-a36a-236476570a56": {
+      "name": "TeKnowra 合同附件＋企业制度＋技能计算 验收草稿",
+      "full_hash": "690c6431d49a7b2cd6c5650a91cbb27d178a09359a23e99218345ee6c3afdb39",
+      "node_configs": "89e951069da5f1fee17294dc7f48669621be4e5464f892f68a3239de227f50a1",
+      "edge_configs": "d863847c697d32a3be2188e37603d5c1cd33c112d669b088c9af2c40016e6a47",
+      "nodes": 6,
+      "edges": 5
+    },
+    "60fb3de4-422a-45b6-8d9a-b8f85520d05e": {
+      "name": "TeKnowra draft 合同与信用多专家 Langflow 等价验收",
+      "full_hash": "2f770cbdc322382964cb1a85e17aa255e7004dcd83c117160bb764eaa74b1340",
+      "node_configs": "f564c5298bceae732f8bc4d74e26acbffd9dc872faaf44144da7a6afbb0512b4",
+      "edge_configs": "7959a088b8512d9081863316aca8c2ff0098af5296494ac2c928c22859ba6356",
+      "nodes": 9,
+      "edges": 14
+    },
+    "release_store_sha256": "295a3c1ce1c01e9f1d89bee0ee798d0731c6f8845748f1591d1956072cb9cf0f"
+  },
+  "checks": [
+    {
+      "flow_id": "f444fe58-0907-476b-a36a-236476570a56",
+      "nodes": 6,
+      "edges": 5,
+      "edges_unchanged": true,
+      "complete_node_metadata_unchanged": false,
+      "complete_graph_unchanged": false
+    },
+    {
+      "flow_id": "60fb3de4-422a-45b6-8d9a-b8f85520d05e",
+      "nodes": 9,
+      "edges": 14,
+      "edges_unchanged": true,
+      "complete_node_metadata_unchanged": false,
+      "complete_graph_unchanged": false
+    }
+  ],
+  "release_store_unchanged": true,
+  "note": "仅通过页面选择已有节点、展开/关闭查看面板和下拉、调整视图并截图，未填写字段、拖动节点、更新组件、运行、同步资源或发布。原生画布自动保存后，完整节点元数据和完整图摘要变化；本轮前快照仅保存摘要，不能从摘要精确归因到逐字段变化。两图全部连线及固定发布库摘要一致；不声称完整草稿字节不变。"
+}

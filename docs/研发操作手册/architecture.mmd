@@ -1,0 +1,17 @@
+flowchart TB
+  CAS[Casdoor 统一身份]
+  DEV[研发人员] --> HOST[TeKnowra 平台与聊天]
+  USER[企业员工] --> HOST
+  CAS -. OIDC：平台会话 .-> HOST
+  HOST --> LF[Langflow：可视草稿与固定发布]
+  HOST --> EINO[Eino：已编译 Go 场景]
+  LF --> BRIDGE[TeKnowra 能力桥：当前人/空间/会话/任务检查]
+  EINO --> BRIDGE
+  BRIDGE --> RES[模型 / 授权知识库]
+  BRIDGE --> SK[技能与受控脚本：当前仅 Langflow 接入]
+  BRIDGE --> MCP[CRM MCP：按人 OAuth]
+  CAS -. 用户选择 CAS，CRM 确认并签发本人令牌 .-> MCP
+  MCP --> CRM[CRM 权限与 AskGateway / CrmScope]
+  CRM --> WREN[Wren：语义模型 / 规划校验 / 只读查询]
+  IDE[IDE + Wren CLI：建模与口径审定] --> WREN
+  HOST --> DATA[数据库 / 文件 / 发布元数据 / OAuth 存储]

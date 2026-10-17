@@ -1,5 +1,11 @@
 import { get, post, put, del } from "../../utils/request";
 
+export interface ExecutionCatalog {
+  engines: Array<{id: string; name: string; unsupported_sections: string[]; unsupported_settings: string[]}>;
+  eino_definitions: Array<{id: string; name: string; knowledge: boolean; tools: string[] | null; implementation_version: string}>;
+}
+export function getExecutionCatalog() { return get<{data:ExecutionCatalog}>('/api/v1/agents/execution-catalog'); }
+
 // 智能体配置
 // 智能推理下的智能体类型预设 ID
 // 'rag-qa'       : 经典文档/FAQ 分块 RAG
@@ -31,6 +37,8 @@ export interface QuestionSuggestionConfig {
 }
 
 export interface CustomAgentConfig {
+	 execution_engine?: '' | 'native' | 'langflow' | 'eino';
+  eino_definition?: string;
   // ===== 基础设置 =====
   agent_mode?: 'quick-answer' | 'smart-reasoning';  // 运行模式：quick-answer=RAG模式, smart-reasoning=ReAct Agent模式
   // 智能推理模式下的类型预设，用于一键应用"系统提示词 + 工具 + KB 兼容性"组合
@@ -47,12 +55,15 @@ export interface CustomAgentConfig {
   temperature?: number;
   max_completion_tokens?: number;   // 0 = 跟随系统默认（快速问答 2048；智能推理 4096，绑沙箱可写文件时 24576）。大于 0 为自定义上限
   thinking?: boolean;                      // 是否启用思考模式（支持扩展思考的模型）
+  // 思考强度：off | auto | minimal | low | medium | high | xhigh | max。
+  // 为空时退回 thinking 布尔值（true == auto，false == off）。
+  reasoning_effort?: string;
   citation_enabled?: boolean;        // 是否在最终回答中输出知识库/网页来源引用（默认开启）
 
   // ===== Agent模式设置 =====
   max_iterations?: number;          // 最大迭代次数；-1 表示不限制
   llm_call_timeout?: number;        // LLM调用超时时间（秒）
-  allowed_tools?: string[];         // 允许的工具
+  allowed_tools?: string[] | null;  // 允许的工具；null/未设置 = 后端默认工具，[] = 不使用内置工具
   reflection_enabled?: boolean;     // 是否启用反思
   // MCP服务选择模式：all=全部启用的MCP服务, selected=指定服务, none=不使用MCP
   mcp_selection_mode?: 'all' | 'selected' | 'none';
@@ -116,6 +127,8 @@ export interface CustomAgentConfig {
   // 缺省（旧数据）等同于 true：这是一个只能"关"的开关，空间设置关闭时
   // 这里打开也不会生效。
   memory_enabled?: boolean;
+  disable_chat_history_indexing?: boolean;
+  allow_session_attachments?: boolean;
 
   // ===== 检索策略设置 =====
   embedding_top_k?: number;         // 向量召回TopK
@@ -175,6 +188,7 @@ export interface UpdateAgentRequest {
 // 内置智能体 ID（常用的保留常量，便于代码引用）
 export const BUILTIN_QUICK_ANSWER_ID = 'builtin-quick-answer';
 export const BUILTIN_SMART_REASONING_ID = 'builtin-smart-reasoning';
+export const BUILTIN_WEKNORA_ASSISTANT_ID = 'builtin-weknora-assistant';
 
 // AgentMode 常量
 export const AGENT_MODE_QUICK_ANSWER = 'quick-answer';
@@ -206,13 +220,19 @@ export function getAgentById(id: string) {
 }
 
 // 创建智能体
+// 保存时后端对 allowed_tools 的处理说明（不阻止保存）
+export interface AllowedToolsWarnings {
+  kept_unknown?: string[];  // 已保存、但当前版本没有的工具名，保留不动
+  dropped?: string[];       // 由其他设置控制的工具，已从列表移除
+}
+
 export function createAgent(data: CreateAgentRequest) {
-  return post<{ data: CustomAgent }>('/api/v1/agents', data);
+  return post<{ data: CustomAgent; allowed_tools_warnings?: AllowedToolsWarnings }>('/api/v1/agents', data);
 }
 
 // 更新智能体
 export function updateAgent(id: string, data: UpdateAgentRequest) {
-  return put<{ data: CustomAgent }>(`/api/v1/agents/${id}`, data);
+  return put<{ data: CustomAgent; allowed_tools_warnings?: AllowedToolsWarnings }>(`/api/v1/agents/${id}`, data);
 }
 
 // 删除智能体
@@ -301,6 +321,35 @@ export function getAgentTypePresets() {
   return get<{ data: AgentTypePreset[] }>('/api/v1/agents/type-presets');
 }
 
+// 智能体可选工具目录（编辑器用，来自后端 AvailableToolDefinitions）
+export type AgentToolKBCapability = 'vector' | 'keyword' | 'wiki' | 'graph' | 'faq';
+
+export interface AgentToolRequirement {
+  any_of?: AgentToolKBCapability[];
+  all_of?: AgentToolKBCapability[];
+}
+
+export interface AgentToolDefinition {
+  name: string;
+  label: string;
+  description: string;
+  group: string;
+  danger?: boolean;
+  requirement: AgentToolRequirement;
+}
+
+export interface AgentToolCatalog {
+  tools: AgentToolDefinition[];
+  // allowed_tools 未设置（null）时运行时使用的工具
+  default_tools: string[];
+  // 由智能体的其他设置决定是否注册的工具；写进 allowed_tools 不会注册
+  switch_managed_tools: string[];
+}
+
+export function getAgentTools() {
+  return get<{ data: AgentToolCatalog }>('/api/v1/agents/tools');
+}
+
 // ===== IM渠道 =====
 
 export interface IMChannel {
@@ -313,6 +362,7 @@ export interface IMChannel {
   enabled: boolean;
   mode: 'webhook' | 'websocket' | 'longpoll';
   output_mode: 'stream' | 'full';
+  locale?: '' | 'zh-CN' | 'zh-TW' | 'en-US' | 'ko-KR' | 'ja-JP' | 'ru-RU';
   session_mode?: 'user' | 'thread';
   knowledge_base_id?: string;
   credentials: Record<string, any>;
@@ -336,6 +386,7 @@ export interface IMChannelOverview {
   enabled: boolean;
   mode: IMChannel['mode'];
   output_mode: IMChannel['output_mode'];
+  locale?: IMChannel['locale'];
   session_mode?: IMChannel['session_mode'];
   bot_identity: string;
   created_at: string;
@@ -369,6 +420,7 @@ export interface SuggestedQuestion {
   question: string;
   source: 'faq' | 'document' | 'agent_config' | 'wiki';
   knowledge_base_id?: string;
+  knowledge_id?: string;
 }
 
 // 获取智能体推荐问题

@@ -1,3 +1,4 @@
+import { emitAssistantDataChange } from '@/utils/assistantDataChange'
 import { applyFinalArtifactContent } from '@/utils/finalArtifactContent'
 import { markRaw, nextTick, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -48,6 +49,74 @@ function mergeToolCallArguments(previous: unknown, incoming: unknown): Record<st
       ? (incoming as Record<string, unknown>)
       : { value: incoming }
   return { ...prev, ...next }
+}
+
+const AWAITING_INPUT = 'awaiting_input'
+
+const PROMPT_CARD_TYPES = new Set(['tool_approval_required', 'agent_prompt_required'])
+
+/** Whether e is the card of a prompt the user answers (approval, question). */
+export function isPromptCard(e: ChatMessage | undefined): boolean {
+  return PROMPT_CARD_TYPES.has(String(e?.type || ''))
+}
+
+export function isAwaitingInput(message: ChatMessage | undefined): boolean {
+  return message?.run_state === AWAITING_INPUT
+}
+
+/** Rebuilds the card of the prompt a suspended run waits on, from history. */
+export function pendingPromptEvents(prompt: unknown): ChatMessage[] {
+  const p = prompt as Record<string, any> | undefined
+  if (!p?.id) return []
+  const request = (p.request || {}) as Record<string, any>
+  const createdAt = Date.parse(String(p.created_at || ''))
+  const requestedAt = Number.isNaN(createdAt) ? undefined : Math.floor(createdAt / 1000)
+  if (p.kind === 'ask_user') {
+    return [{
+      type: 'agent_prompt_required',
+      pending_id: p.id,
+      kind: p.kind,
+      request,
+      tool_call_id: p.tool_call_id,
+      requested_at: requestedAt,
+      suspendable: true,
+      suspended: true,
+      expires_at: p.expires_at,
+      resolved: false,
+    }]
+  }
+  if (p.kind !== 'tool_approval') return []
+  return [{
+    type: 'tool_approval_required',
+    pending_id: p.id,
+    service_name: request.service_name,
+    mcp_tool_name: request.mcp_tool_name,
+    description: request.description,
+    args_json: request.args === undefined ? '' : JSON.stringify(request.args),
+    tool_call_id: p.tool_call_id,
+    requested_at: requestedAt,
+    suspendable: true,
+    suspended: true,
+    expires_at: p.expires_at,
+    resolved: false,
+  }]
+}
+
+/** The card of an ask_user call that finished, from the stored tool result. */
+function askUserHistoryCard(toolCallId: string, data: ChatMessage): ChatMessage {
+  return {
+    type: 'agent_prompt_required',
+    pending_id: `history-${toolCallId}`,
+    kind: 'ask_user',
+    request: data.question,
+    tool_call_id: toolCallId,
+    resolved: true,
+    answered: Boolean(data.answered),
+    response: data.answer,
+    resolve_reason: data.reason,
+    timed_out: Boolean(data.timed_out),
+    canceled: Boolean(data.canceled),
+  }
 }
 
 export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
@@ -130,9 +199,19 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
       if (msg.role === 'assistant' && !msg.is_completed) {
         markAssistantStopped(msg)
       }
+      if (msg.role === 'assistant' && isAwaitingInput(msg)) abandonPendingPrompts(msg)
     }
     fullContent.value = ''
     currentAssistantMessageId.value = ''
+  }
+
+  /** A new message supersedes the prompt a suspended run waits on. */
+  const abandonPendingPrompts = (msg: ChatMessage) => {
+    const stream = (msg.agentEventStream as ChatMessage[] | undefined) || []
+    msg.agentEventStream = stream.map((e) =>
+      isPromptCard(e) && !e.resolved ? { ...e, resolved: true, abandoned: true } : e,
+    )
+    msg.run_state = ''
   }
 
   /** Mark the assistant row being stopped without clearing its id (stop API still needs it). */
@@ -317,6 +396,10 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
     return out
   }
 
+  const agentStepsAreTruncated = (agentSteps: unknown[] | undefined) =>
+    Array.isArray(agentSteps) &&
+    agentSteps.some((step) => (step as ChatMessage | undefined)?.truncated === true)
+
   const reconstructEventStreamFromSteps = (
     agentSteps: unknown[],
     messageContent: string,
@@ -338,7 +421,7 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
         const reasoningText =
           step.reasoning_content && String(step.reasoning_content).trim()
             ? String(step.reasoning_content)
-            : ''
+            : step.node_key && step.thought ? String(step.thought) : ''
         if (reasoningText) {
           events.push({
             type: 'thinking',
@@ -348,6 +431,9 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
             thinking: false,
             timestamp: stepTimestamp || undefined,
             duration_ms: step.duration || undefined,
+            run_id: step.run_id,
+            node_key: step.node_key,
+            definition_version: step.definition_version,
           })
         }
         const preambleText = step.thought && String(step.thought).trim() ? String(step.thought) : ''
@@ -372,6 +458,10 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
             const result = toolCall.result as ChatMessage | undefined
             const resultData = result?.data as ChatMessage | undefined
             const target = toolCall.target as ChatMessage | undefined
+            if (resultData?.display_type === 'ask_user') {
+              events.push(askUserHistoryCard(String(toolCall.id || ''), resultData))
+              return
+            }
             events.push({
               type: 'tool_call',
               tool_call_id: toolCall.id,
@@ -407,6 +497,11 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
         done: true,
       }
       if (isFallback) answerEvent.is_fallback = true
+      // A round the completion cap cut off marks its step. Live streaming
+      // carries the same fact on the answer event, but history is rebuilt from
+      // agent_steps and never sees those events, so without this a reloaded
+      // half-written answer looks finished.
+      if (agentStepsAreTruncated(agentSteps)) answerEvent.truncated = true
       events.push(answerEvent)
     } else if (isCompleted) {
       events.push({
@@ -419,13 +514,34 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
     return events
   }
 
+  /**
+   * Readies a suspended message to stream again after its prompt was answered
+   * and the server resumed the run. The resumed stream carries only new events,
+   * so the timeline built from history stays and the blocked tool call is
+   * dropped: the resumed run reports it afresh.
+   */
+  const prepareResumedMessage = (message: ChatMessage, pendingId: string) => {
+    const stream = (message.agentEventStream as ChatMessage[] | undefined) || []
+    const card = stream.find((e) => isPromptCard(e) && e.pending_id === pendingId)
+    const blockedCall = card?.tool_call_id
+    message.agentEventStream = stream.filter((e) => {
+      if (e.type === 'agent_complete' || e.type === 'stop') return false
+      return !(blockedCall && e.type === 'tool_call' && e.tool_call_id === blockedCall)
+    })
+    message._eventMap = new Map()
+    message._pendingToolCalls = new Map()
+    message.run_state = ''
+    message.is_completed = false
+  }
+
   const handleMsgList = async (
     data: ChatMessage[],
     isScrollType = false,
     newScrollHeight?: number,
+    replaceHistory = false,
   ) => {
     const chatlist = [...data]
-    const existingIds = new Set(messagesList.map((m) => m.id).filter(Boolean))
+    const existingIds = new Set(replaceHistory ? [] : messagesList.map((m) => m.id).filter(Boolean))
     const processed: ChatMessage[] = []
 
     for (const raw of chatlist) {
@@ -434,6 +550,9 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
       if (item.id) existingIds.add(item.id)
 
       item.isAgentMode = false
+      // A run awaiting input has ended for now: nothing streams until its
+      // prompt is answered, so it renders as settled.
+      const awaiting = isAwaitingInput(item)
       const willContinueStream = preserveIncompleteStreamReactive && !item.is_completed
       if (willContinueStream) {
         item.agentEventStream = item.agentEventStream || []
@@ -459,8 +578,19 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
           ),
         )
         item.hideContent = true
+        if (agentStepsAreTruncated(item.agent_steps as unknown[])) item.truncated = true
       }
 
+      if (awaiting) {
+        item.isAgentMode = true
+        item.hideContent = true
+        item.agentEventStream = markRaw(
+          (item.agentEventStream as ChatMessage[])
+            .filter((e) => e.type !== 'agent_complete')
+            .concat(pendingPromptEvents(item.pending_prompt)),
+        )
+        item.is_completed = true
+      }
       restoreQuickAnswerFlags(item)
 
       if (item.content) {
@@ -487,7 +617,11 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
       processed.push(item)
     }
 
-    if (processed.length > 0) {
+    if (replaceHistory) {
+      // A pre-SSE rejection cannot bind the optimistic user row to its DB id.
+      // Replace from the successful history response, never deduplicate by text.
+      messagesList.splice(0, messagesList.length, ...expandSteerForksInHistory(processed))
+    } else if (processed.length > 0) {
       if (isScrollType) {
         for (let i = processed.length - 1; i >= 0; i--) {
           messagesList.unshift(processed[i])
@@ -548,6 +682,17 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
     }
   }
 
+  const preserveEinoErrorDisplay = (message: ChatMessage, errorMsg: string, engine?: unknown, definition?: unknown) => {
+    let stream = message.agentEventStream as ChatMessage[] | undefined
+    // The server publication manifest owns definition IDs. Render failures for
+    // every versioned Eino timeline instead of duplicating its business list.
+    const versionedError = typeof definition === 'string' && definition.length > 0
+    if (!stream?.some(event => typeof event.definition_version === 'string' && event.definition_version.length > 0) && engine !== 'langflow' && engine !== 'eino' && !versionedError) return
+    if (!stream) { stream = []; message.agentEventStream = stream }
+    stream.forEach(event => { if (event.type === 'thinking' && !event.done) event.done = true })
+    stream.push({ type: 'answer', content: errorMsg, done: true, failed: true })
+  }
+
   const handleAgentChunk = (data: ChatMessage) => {
     const dataId = data.id as string | undefined
     let message = resolveActiveAssistantMessage(data)
@@ -591,7 +736,8 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
       (data.response_type === 'thinking' ||
         data.response_type === 'answer' ||
         data.response_type === 'tool_call' ||
-        data.response_type === 'tool_approval_required')
+        data.response_type === 'tool_approval_required' ||
+        data.response_type === 'agent_prompt_required')
     ) {
       log('[Agent Chunk] Closing loading for continued stream')
       loading.value = false
@@ -624,6 +770,9 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
               done: false,
               startTime: Date.now(),
               thinking: true,
+              run_id: dataPayload?.run_id,
+              node_key: dataPayload?.node_key,
+              definition_version: dataPayload?.definition_version,
             }
             stream.push(thinkingEvent)
             if (eventId) eventMap.set(eventId, thinkingEvent)
@@ -679,10 +828,62 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
           description: d.description,
           args_json: d.args_json,
           timeout_seconds: d.timeout_seconds,
+          hot_wait_seconds: d.hot_wait_seconds,
+          suspendable: d.suspendable,
           requested_at: d.requested_at,
           tool_call_id: d.tool_call_id,
           resolved: false,
         })
+        break
+      }
+      case 'agent_prompt_required': {
+        if (!message.agentEventStream) message.agentEventStream = []
+        const d = dataPayload || {}
+        ;(message.agentEventStream as ChatMessage[]).push({
+          type: 'agent_prompt_required',
+          pending_id: d.pending_id,
+          kind: d.kind,
+          request: d.request,
+          timeout_seconds: d.timeout_seconds,
+          hot_wait_seconds: d.hot_wait_seconds,
+          suspendable: d.suspendable,
+          requested_at: d.requested_at,
+          tool_call_id: d.tool_call_id,
+          resolved: false,
+        })
+        break
+      }
+      case 'agent_prompt_resolved': {
+        const d = dataPayload || {}
+        const ev = (message.agentEventStream as ChatMessage[] | undefined)?.find(
+          (e) => e.type === 'agent_prompt_required' && e.pending_id === d.pending_id,
+        )
+        if (ev) {
+          ev.resolved = true
+          ev.answered = d.answered
+          ev.response = d.response
+          ev.resolve_reason = d.reason
+          ev.timed_out = d.timed_out
+          ev.canceled = d.canceled
+        }
+        break
+      }
+      case 'run_suspended': {
+        // The run ended waiting on this prompt; answering it resumes the run.
+        const d = dataPayload || {}
+        const card = (message.agentEventStream as ChatMessage[] | undefined)?.find(
+          (e) => isPromptCard(e) && e.pending_id === d.pending_id,
+        )
+        if (card) {
+          card.suspended = true
+          card.expires_at = d.expires_at
+        }
+        message.run_state = AWAITING_INPUT
+        break
+      }
+      case 'run_resumed': {
+        message.run_state = ''
+        message.is_completed = false
         break
       }
       case 'tool_approval_resolved': {
@@ -828,6 +1029,9 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
           const toolCallId = dataPayload.tool_call_id as string | undefined
           const toolName = dataPayload.tool_name as string | undefined
           const success = responseType !== 'error' && dataPayload.success !== false
+          if (responseType === 'tool_result' && dataPayload.success === true && toolName === 'run_operation') {
+            emitAssistantDataChange(dataPayload.data_change)
+          }
           log('[Tool Result]', {
             tool_call_id: toolCallId,
             tool_name: toolName,
@@ -871,6 +1075,7 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
           if (responseType === 'error' && !toolName) {
             const errorMsg = String(data.content || t('chat.processError'))
             message.content = errorMsg
+            preserveEinoErrorDisplay(message, errorMsg, dataPayload.execution_engine, dataPayload.definition_version)
             message.is_completed = true
             isReplying.value = false
             loading.value = false
@@ -882,6 +1087,7 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
         } else if (responseType === 'error') {
           const errorMsg = String(data.content || t('chat.processError'))
           message.content = errorMsg
+          preserveEinoErrorDisplay(message, errorMsg)
           message.is_completed = true
           isReplying.value = false
           loading.value = false
@@ -909,7 +1115,21 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
           if (eventId) eventMap.set(eventId, answerEvent)
         }
         if (!answerEvent.content && message.content && String(message.content).trim()) {
-          answerEvent.content = message.content
+          // Seeding exists for resume paths where message.content holds text no
+          // stream event carries. When a live prior answer event exists, its
+          // text is already counted by recomposeAgentAnswer, so seeding the new
+          // event would duplicate every prior round on the next recompose.
+          const hasLivePriorAnswer = stream.some(
+            (e) =>
+              e !== answerEvent &&
+              e.type === 'answer' &&
+              !e.superseded &&
+              e.content &&
+              String(e.content).trim(),
+          )
+          if (!hasLivePriorAnswer) {
+            answerEvent.content = message.content
+          }
         }
         if (data.content) {
           answerEvent.content = String(answerEvent.content || '') + String(data.content)
@@ -920,18 +1140,19 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
           answerEvent.is_fallback = true
           message.is_fallback = true
         }
+        // The completion cap cut this answer off. The backend sends it on the
+        // content chunks and again on the Done marker, because an answer that
+        // streamed live only learns of the cap at the close.
+        if (dataPayload?.truncated) {
+          answerEvent.truncated = true
+          message.truncated = true
+        }
         if (data.done && !answerEvent.done) {
           answerEvent.done = true
           onAgentAnswerDone?.(message)
-          // Agent turns may continue after a finishing-round inject. Closing
-          // isReplying here lets the composer start a second AgentQA. Wait
-          // for `complete` (or a non-agent answer) to mark the session idle.
-          if (!isAgentStreamSession()) {
-            loading.value = false
-            isReplying.value = false
-            fullContent.value = ''
-            currentAssistantMessageId.value = ''
-          }
+          // This closes only the answer segment. Both Agent and quick-answer
+          // turns still have to collect artifacts/checkpoint/persist before
+          // `complete` makes their files readable and marks the session idle.
         }
         break
       }
@@ -1021,7 +1242,7 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
         if (usage) {
           message.usage = usage
         }
-        if (message.agentEventStream) {
+        if (message.agentEventStream && !isAwaitingInput(message)) {
           ;(message.agentEventStream as ChatMessage[]).push({
             type: 'agent_complete',
             total_duration_ms: dataPayload?.total_duration_ms || 0,
@@ -1064,13 +1285,40 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
       assistant_message_id: data.assistant_message_id,
     })
 
+    // Persistence can fail after the entire answer has streamed. Surface the
+    // failure separately; the generic error path replaces the answer content.
+    if (data.response_type === 'error' && (data.data as ChatMessage | undefined)?.stage === 'message_persistence') {
+      const message = resolveActiveAssistantMessage(data)
+      const errorMsg = String(data.content || t('chat.processError'))
+      if (message) {
+        message.persistence_error = errorMsg
+        message.is_completed = true
+        message.thinking = false
+        message.artifactsCollecting = false
+        emitMessageUpdated(message)
+      }
+      loading.value = false
+      isReplying.value = false
+      fullContent.value = ''
+      currentAssistantMessageId.value = ''
+      if (data.id) replaySegments.delete(String(data.id))
+      reportError(errorMsg)
+      scrollToBottom()
+      return
+    }
+
     if (data.response_type === 'agent_query') {
       if (data.id) replaySegments.delete(String(data.id))
       const replay = resetSteerTurnForReplay(messagesList, String(data.id || ''))
       if (replay) replaySegments.set(String(data.id), replay)
       if (data.id) {
         const earlyMsg = getTrailingIncompleteAssistant()
-        if (earlyMsg) earlyMsg.request_id = data.id
+        // Only adopt a placeholder that has no request yet (or already this
+        // one). An earlier turn whose stream was cut stays incomplete;
+        // relabelling it would render this turn's answer in that earlier slot.
+        if (earlyMsg && (!earlyMsg.request_id || earlyMsg.request_id === data.id)) {
+          earlyMsg.request_id = data.id
+        }
       }
       if (data.assistant_message_id) {
         currentAssistantMessageId.value = data.assistant_message_id as string
@@ -1086,7 +1334,9 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
       let existingMessage = replay || findLastMessage(
         (item) =>
           item.role === 'assistant' &&
-          (item.id === data.id || item.request_id === data.id),
+          (item.id === data.id ||
+            item.request_id === data.id ||
+            (!!data.assistant_message_id && item.id === data.assistant_message_id)),
       )
       const created = !existingMessage
       if (!existingMessage) {
@@ -1135,7 +1385,11 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
       data.response_type === 'reflection' ||
       data.response_type === 'artifacts_pending' ||
       data.response_type === 'context_compacted' ||
-      data.response_type === 'user_message_injected'
+      data.response_type === 'user_message_injected' ||
+      data.response_type === 'run_suspended' ||
+      data.response_type === 'run_resumed' ||
+      data.response_type === 'agent_prompt_required' ||
+      data.response_type === 'agent_prompt_resolved'
 
     const activeAssistant = getTrailingIncompleteAssistant()
     const isCurrentlyAgentMode = activeAssistant?.isAgentMode === true
@@ -1203,6 +1457,26 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
       if (item.request_id === data.id) return true
       return item.id === data.id
     })
+    if (data.response_type === 'complete' && existingMessage) {
+      if (existingMessage.is_completed) return
+      const metadata = data.data as ChatMessage | undefined
+      applyFinalArtifactContent(existingMessage, metadata?.final_content)
+      if (Array.isArray(metadata?.artifacts)) existingMessage.artifacts = metadata.artifacts
+      const usage = metadata?.usage || data.usage
+      if (usage) existingMessage.usage = usage
+      existingMessage.artifactsCollecting = false
+      existingMessage.thinking = false
+      existingMessage.is_completed = true
+      loading.value = false
+      isReplying.value = false
+      fullContent.value = ''
+      currentAssistantMessageId.value = ''
+      emitMessageUpdated(existingMessage, { ...data, is_completed: true })
+      onReplyComplete?.(String(existingMessage.content || ''))
+      onTurnComplete?.(existingMessage)
+      scrollToBottom()
+      return
+    }
     if (existingMessage?.is_completed && data.done && !data.content) {
       log('[Non-Agent] Ignoring duplicate completion event for completed message')
       return
@@ -1237,7 +1511,11 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
 
     if (!existingMessage) loading.value = false
 
-    if (data.done) {
+    // answer.done closes the token stream, not the persisted turn. In
+    // particular the final image retry must wait for the subsequent complete.
+    // Untyped legacy streams retain their original done behavior.
+    const turnDone = data.done && data.response_type !== 'answer'
+    if (turnDone) {
       obj.is_completed = true
       onReplyComplete?.(String(obj.content || ''))
       isReplying.value = false
@@ -1245,7 +1523,7 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
       currentAssistantMessageId.value = ''
     }
     updateAssistantSession(obj)
-    if (data.done) {
+    if (turnDone) {
       const completed = resolveActiveAssistantMessage(data) || obj
       onTurnComplete?.(completed)
     }
@@ -1258,6 +1536,7 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
     handleMsgList,
     processStreamChunk,
     prepareForNewOutgoingMessage,
+    prepareResumedMessage,
     markInFlightAssistantStopped,
   }
 }

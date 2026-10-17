@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Tencent/WeKnora/internal/models/api"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
 )
@@ -175,7 +176,17 @@ func (r *Registry) DecodeResponse(response *types.ChatResponse) {
 		return
 	}
 	response.Content = r.DecodeOutputText(response.Content)
+	reasoningBefore := response.ReasoningContent
 	response.ReasoningContent = r.DecodeOutputText(response.ReasoningContent)
+	if response.ReasoningContent != reasoningBefore &&
+		api.SignatureFor(api.APIAnthropicMessages, response.ReasoningSignature) != "" {
+		// Same reason and same protocol limit as dropStaleReasoningSignature:
+		// the decoded text is no longer what Claude signed, and this response
+		// is what lands on the agent step. Anthropic turns replay from
+		// ReasoningMetadata, which decoding never touches, so this only
+		// affects turns stored before that metadata existed.
+		response.ReasoningSignature = ""
+	}
 	r.DecodeToolCalls(response.ToolCalls)
 }
 
@@ -231,6 +242,24 @@ func (r *Registry) RegisterKnowledgeBase(id string) string {
 		return ""
 	}
 	return r.sources.RegisterKnowledgeBase(id)
+}
+
+// RegisterIssue allocates the iN handle the Wiki issue tools accept for id.
+func (r *Registry) RegisterIssue(id string) string {
+	if r == nil || r.issues == nil || strings.TrimSpace(id) == "" {
+		return ""
+	}
+	return r.issues.Register(id)
+}
+
+// EncodeKnownIssues replaces registered Wiki issue IDs with their handles.
+// CompactKnownText leaves them alone because tools opt into issue encoding
+// per policy; runtime context the engine renders opts in explicitly.
+func (r *Registry) EncodeKnownIssues(text string) string {
+	if r == nil || r.issues == nil {
+		return text
+	}
+	return r.issues.EncodeKnownText(text)
 }
 
 func (r *Registry) RegisterWeb(rawURL, title string) string {
@@ -310,8 +339,11 @@ func (r *Registry) ModelToolResultForTool(toolName string, result *types.ToolRes
 }
 
 func outputFilesPrompt(result *types.ToolResult) string {
-	if result == nil || len(result.OutputFiles) == 0 {
+	if result == nil || result.OutputFiles == nil {
 		return ""
+	}
+	if len(result.OutputFiles) == 0 {
+		return "\nOutput files: none identified by this call."
 	}
 	return "\nOutput files: `" + strings.Join(result.OutputFiles, "`, `") + "`"
 }

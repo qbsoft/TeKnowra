@@ -8,10 +8,10 @@ import (
 )
 
 func TestShouldOmitRawToolOutput(t *testing.T) {
-	if !ShouldOmitRawToolOutput(ToolListKnowledgeChunks, map[string]interface{}{"display_type": "knowledge_chunks_list"}) {
-		t.Fatal("structured list_knowledge_chunks output should be omitted")
+	if !ShouldOmitRawToolOutput(ToolReadDocument, map[string]interface{}{"display_type": "knowledge_chunks_list"}) {
+		t.Fatal("structured read_document output should be omitted")
 	}
-	if !ShouldOmitRawToolOutput(ToolGrepChunks, map[string]interface{}{"display_type": "grep_results"}) {
+	if !ShouldOmitRawToolOutput(LegacyToolGrepChunks, map[string]interface{}{"display_type": "grep_results"}) {
 		t.Fatal("structured grep output should be omitted")
 	}
 	if ShouldOmitRawToolOutput("custom_tool", nil) {
@@ -45,7 +45,7 @@ func TestSanitizeToolDataForPersist_knowledgeChunksList(t *testing.T) {
 		"total_chunks":    282,
 		"chunks":          []map[string]interface{}{{"content": "secret"}},
 	}
-	out := SanitizeToolDataForPersist(ToolListKnowledgeChunks, data)
+	out := SanitizeToolDataForPersist(ToolReadDocument, data)
 	if _, ok := out["chunks"]; ok {
 		t.Fatal("chunk bodies should be stripped from persisted tool data")
 	}
@@ -59,7 +59,7 @@ func TestSanitizeAgentStepsForStorage_stripsLargeOutput(t *testing.T) {
 		Iteration: 1,
 		ToolCalls: []types.ToolCall{{
 			ID:   "call-1",
-			Name: ToolListKnowledgeChunks,
+			Name: ToolReadDocument,
 			Result: &types.ToolResult{
 				Success: true,
 				Output:  strings.Repeat("x", 10000),
@@ -88,7 +88,7 @@ func TestSanitizeAgentStepsForStorage_stripsLargeOutput(t *testing.T) {
 }
 
 func TestSanitizeToolResultForClient_omitsOutput(t *testing.T) {
-	meta := SanitizeToolResultForClient(ToolListKnowledgeChunks, &types.ToolResult{
+	meta := SanitizeToolResultForClient(ToolReadDocument, &types.ToolResult{
 		Success: true,
 		Output:  "<knowledge_chunks>very large</knowledge_chunks>",
 		Data: map[string]interface{}{
@@ -364,5 +364,27 @@ func TestCompactToolOutputForHistory_editSandboxFileIncludesDiffStat(t *testing.
 	})
 	if history != "Edited /workspace/output/a.py (+5 -3, 2 replacement(s), 80 bytes)" {
 		t.Fatalf("history should include +/- and replacements, got %q", history)
+	}
+}
+
+func TestOperationDataChangeIsClientOnly(t *testing.T) {
+	result := &types.ToolResult{
+		Success: true, Output: "ok",
+		Data: map[string]any{"data_change": map[string]any{"operation": "agent.create", "area": "agent"}},
+	}
+	if SanitizeToolResultForClient(ToolRunOperation, result)["data_change"] == nil {
+		t.Fatal("live operation results must retain the marker")
+	}
+	if SanitizeToolResultForClient("other_tool", result)["data_change"] != nil {
+		t.Fatal("other tools must not emit operation change markers")
+	}
+	stored := SanitizeAgentStepsForStorage([]types.AgentStep{{ToolCalls: []types.ToolCall{{
+		Name: ToolRunOperation, Result: result,
+	}}}})
+	if stored[0].ToolCalls[0].Result.Data["data_change"] != nil {
+		t.Fatal("history must not retain change markers")
+	}
+	if result.Data["data_change"] == nil {
+		t.Fatal("storage sanitization must not mutate the live result")
 	}
 }

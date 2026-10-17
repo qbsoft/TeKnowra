@@ -44,6 +44,41 @@ func TestGetLiveRunMissingKeyIsEmpty(t *testing.T) {
 	require.Empty(t, req)
 }
 
+func TestSingleInstanceRestartDoesNotKeepDeadRunAlive(t *testing.T) {
+	t.Setenv("TEKNOWRA_SINGLE_INSTANCE", "true")
+	old, mini := newTestRedisStreamManager(t, time.Hour)
+	ctx := context.Background()
+	require.NoError(t, old.SetLiveRun(ctx, "crash", "old-message", "old-request"))
+	restarted, err := NewRedisStreamManager(mini.Addr(), "", "", 0, "test", time.Hour)
+	require.NoError(t, err)
+	defer restarted.Close()
+	id, _, err := restarted.GetLiveRun(ctx, "crash")
+	require.NoError(t, err)
+	require.Empty(t, id, "a new single-instance process must not prolong a dead owner")
+	require.NoError(t, restarted.SetLiveRun(ctx, "crash", "new-message", "new-request"))
+	id, _, err = restarted.GetLiveRun(ctx, "crash")
+	require.NoError(t, err)
+	require.Equal(t, "new-message", id)
+}
+
+func TestMultiInstancePreservesOtherOwnerAndLegacyMarker(t *testing.T) {
+	t.Setenv("TEKNOWRA_SINGLE_INSTANCE", "false")
+	old, mini := newTestRedisStreamManager(t, time.Hour)
+	ctx := context.Background()
+	require.NoError(t, old.SetLiveRun(ctx, "active", "message", "request"))
+	other, err := NewRedisStreamManager(mini.Addr(), "", "", 0, "test", time.Hour)
+	require.NoError(t, err)
+	defer other.Close()
+	id, _, err := other.GetLiveRun(ctx, "active")
+	require.NoError(t, err)
+	require.Equal(t, "message", id)
+	require.NoError(t, mini.Set(old.buildLiveRunKey("legacy"), `{"assistant_message_id":"legacy-message","request_id":"r"}`))
+	other.singleInstance = true
+	id, _, err = other.GetLiveRun(ctx, "legacy")
+	require.NoError(t, err)
+	require.Equal(t, "legacy-message", id)
+}
+
 // The live-run key is written once with the StreamManager TTL. A turn that
 // runs longer than that TTL used to look idle, and /steer answered new_run.
 // Streaming (AppendEvent / GetEvents) must refresh the marker.
@@ -179,6 +214,76 @@ func TestAppendSteerEventsDeduplicatesClientIDs(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, events, 1)
 			require.Equal(t, true, events[0].Data["consumed"])
+		})
+	}
+}
+
+func TestDropMessageStreamsRemovesEventsSteerAndLiveRun(t *testing.T) {
+	mgr := NewMemoryStreamManager()
+	ctx := context.Background()
+	require.NoError(t, mgr.AppendEvent(ctx, "sess", "a-1", interfaces.StreamEvent{ID: "e1"}))
+	require.NoError(t, mgr.AppendSteerEvents(ctx, "sess", "a-1", []interfaces.StreamEvent{{ID: "s1"}}))
+	require.NoError(t, mgr.SetLiveRun(ctx, "sess", "a-1", "req"))
+
+	require.NoError(t, mgr.DropMessageStreams(ctx, "sess", []string{"a-1"}))
+
+	events, _, err := mgr.GetEvents(ctx, "sess", "a-1", 0)
+	require.NoError(t, err)
+	require.Empty(t, events)
+	steer, _, err := mgr.GetSteerEvents(ctx, "sess", "a-1", 0)
+	require.NoError(t, err)
+	require.Empty(t, steer)
+	liveID, _, err := mgr.GetLiveRun(ctx, "sess")
+	require.NoError(t, err)
+	require.Empty(t, liveID)
+}
+
+func TestRedisDropMessageStreamsRemovesEventsSteerAndLiveRun(t *testing.T) {
+	mgr, _ := newTestRedisStreamManager(t, time.Hour)
+	ctx := context.Background()
+	require.NoError(t, mgr.AppendEvent(ctx, "sess", "a-1", interfaces.StreamEvent{ID: "e1"}))
+	require.NoError(t, mgr.AppendSteerEvents(ctx, "sess", "a-1", []interfaces.StreamEvent{{ID: "s1"}}))
+	require.NoError(t, mgr.SetLiveRun(ctx, "sess", "a-1", "req"))
+
+	require.NoError(t, mgr.DropMessageStreams(ctx, "sess", []string{"a-1"}))
+
+	events, _, err := mgr.GetEvents(ctx, "sess", "a-1", 0)
+	require.NoError(t, err)
+	require.Empty(t, events)
+	steer, _, err := mgr.GetSteerEvents(ctx, "sess", "a-1", 0)
+	require.NoError(t, err)
+	require.Empty(t, steer)
+	liveID, _, err := mgr.GetLiveRun(ctx, "sess")
+	require.NoError(t, err)
+	require.Empty(t, liveID)
+}
+
+func TestResetEventsDropsEventsAndKeepsSteer(t *testing.T) {
+	redisManager, _ := newTestRedisStreamManager(t, time.Hour)
+	for name, manager := range map[string]interfaces.StreamManager{
+		"memory": NewMemoryStreamManager(), "redis": redisManager,
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			require.NoError(t, manager.AppendEvent(ctx, "session", "run",
+				interfaces.StreamEvent{ID: "old", Content: "before"}))
+			require.NoError(t, manager.AppendSteerEvents(ctx, "session", "run",
+				[]interfaces.StreamEvent{{ID: "steer-1", Content: "next"}}))
+
+			require.NoError(t, manager.ResetEvents(ctx, "session", "run"))
+			events, _, err := manager.GetEvents(ctx, "session", "run", 0)
+			require.NoError(t, err)
+			require.Empty(t, events)
+			steer, _, err := manager.GetSteerEvents(ctx, "session", "run", 0)
+			require.NoError(t, err)
+			require.Len(t, steer, 1)
+
+			require.NoError(t, manager.AppendEvent(ctx, "session", "run",
+				interfaces.StreamEvent{ID: "new", Content: "after"}))
+			events, _, err = manager.GetEvents(ctx, "session", "run", 0)
+			require.NoError(t, err)
+			require.Len(t, events, 1)
+			require.Equal(t, "new", events[0].ID)
 		})
 	}
 }

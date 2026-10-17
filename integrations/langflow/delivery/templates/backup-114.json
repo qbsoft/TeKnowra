@@ -1,0 +1,25 @@
+{
+  "project": "teknowra-agent-test",
+  "docker": "docker",
+  "postgres_service": "postgres",
+  "db_user": "teknowra",
+  "database": "teknowra",
+  "schema": 114,
+  "writers": [
+    "frontend",
+    "app",
+    "langflow"
+  ],
+  "reserve_gib": 8,
+  "state_roots": {
+    "config": "/etc/teknowra",
+    "bindings": "/srv/teknowra/bindings",
+    "credentials": "/srv/teknowra/credentials",
+    "platform-state": "/srv/teknowra/platform-state",
+    "langflow-state": "/srv/teknowra/langflow-state",
+    "files": "/srv/teknowra/files"
+  },
+  "sqlite_files": [
+    "langflow-state/langflow.db"
+  ]
+}

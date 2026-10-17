@@ -32,6 +32,12 @@ export const domPurifySecurityHooks = {
         element.removeAttribute(attr);
       }
     });
+    // target is allowed only so the afterSanitizeElements hook can add
+    // target="_blank" together with rel="noopener noreferrer"; never keep an
+    // author-supplied value (SVG <a>, <area>, non-http hrefs skip the hook).
+    if (element.hasAttribute('target')) {
+      element.removeAttribute('target');
+    }
   },
   afterSanitizeElements: (currentNode: Node) => {
     if (!('tagName' in currentNode) || !('getAttribute' in currentNode)) return;
@@ -79,7 +85,7 @@ export const markdownDomPurifyConfig = {
     'clippath', 'lineargradient', 'radialgradient', 'stop', 'pattern',
     'image', 'foreignobject', 'desc', 'title', 'switch', 'symbol', 'mask',
     'math', 'annotation', 'semantics', 'mo', 'mi', 'mn', 'msup', 'mrow', 'mfrac', 'msqrt', 'mroot', 'mstyle',
-    'button',
+    'button', 'details', 'summary',
   ],
   ALLOWED_ATTR: [
     'href', 'title', 'target', 'rel', 'data-tooltip', 'data-url', 'data-kb-id',
@@ -102,5 +108,9 @@ export const markdownDomPurifyConfig = {
     'mathvariant', 'encoding', 'aria-hidden',
   ],
   USE_PROFILES: { html: true, svg: true, mathMl: true },
+  // USE_PROFILES 会整体替换 ALLOWED_ATTR，而 html profile 默认不含 target，
+  // 导致 afterSanitizeElements hook 加上的 target="_blank" 在随后的
+  // _sanitizeAttributes 中被剥离。用 ADD_ATTR 在 profile 之上追加该属性。
+  ADD_ATTR: ['target'],
   ...domPurifySecurityOptions,
 };

@@ -3,6 +3,7 @@ import { ref, onUnmounted } from 'vue';
 import { generateRandomString } from '@/utils/index';
 import i18n from '@/i18n';
 import { getApiBaseUrl } from '@/utils/api-base';
+import type { AssistantAccessLevel } from '@/api/assistant';
 import {
   sanitizeStreamRequestBody,
   type StreamRequestMeta,
@@ -13,6 +14,15 @@ import {
   refreshAccessTokenShared,
   runStreamWithAuthRetry,
 } from '@/utils/authRefresh';
+
+/** The WeKnora page the user has open; agent-chat only. */
+export interface PageContextPayload {
+  agent_id?: string
+  knowledge_base_id?: string
+  knowledge_id?: string
+  wiki_slug?: string
+  wiki_issue_ids?: string[]
+}
 
 interface StreamOptions {
   // 请求方法 (默认POST)
@@ -31,6 +41,7 @@ export function useStream() {
   const isStreaming = ref(false)      // 流状态
   const isLoading = ref(false)        // 初始加载
   const error = ref<string | null>(null)// 错误信息
+  const persistedFailure = ref<{ sessionId: string; messageId: string } | null>(null)
   const lastStreamRequest = ref<StreamRequestMeta | null>(null)
   let controller = new AbortController()
   let streamGeneration = 0
@@ -40,12 +51,13 @@ export function useStream() {
   let renderTimer: number | null = null
 
   // 启动流式请求
-  const startStream = async (params: { session_id: any; query: any; knowledge_base_ids?: string[]; knowledge_ids?: string[]; tag_ids?: string[]; agent_enabled?: boolean; agent_id?: string; agent_source_tenant_id?: string | number; web_search_enabled?: boolean; local_browser_enabled?: boolean; summary_model_id?: string; mcp_service_ids?: string[]; skill_names?: string[]; mentioned_items?: Array<{id: string; name: string; type: string; kb_type?: string; kb_id?: string; kb_name?: string; service_id?: string; skill_name?: string}>; images?: Array<{data: string}>; attachment_uploads?: Array<{data: string; file_name: string; file_size: number}>; attachment_ids?: string[]; suggestion_attribution?: { suggestion_set_id: string; question_id: string }; method: string; url: string; embed_token?: string; embed_session_sig?: string; embed_visitor_id?: string }) => {
+  const startStream = async (params: { session_id: any; query: any; knowledge_base_ids?: string[]; knowledge_ids?: string[]; tag_ids?: string[]; agent_enabled?: boolean; agent_id?: string; agent_source_tenant_id?: string | number; web_search_enabled?: boolean; local_browser_enabled?: boolean; summary_model_id?: string; reasoning_effort?: string; mcp_service_ids?: string[]; skill_names?: string[]; mentioned_items?: Array<{id: string; name: string; type: string; kb_type?: string; kb_id?: string; kb_name?: string; service_id?: string; skill_name?: string}>; images?: Array<{data: string}>; attachment_uploads?: Array<{data: string; file_name: string; file_size: number}>; attachment_ids?: string[]; suggestion_attribution?: { suggestion_set_id: string; question_id: string }; question_origin?: { knowledge_base_id: string; knowledge_id?: string }; page_context?: PageContextPayload; assistant_access?: AssistantAccessLevel; method: string; url: string; embed_token?: string; embed_session_sig?: string; embed_visitor_id?: string }) => {
     const myGeneration = ++streamGeneration
     const streamAbort = controller
     // 重置状态
     output.value = '';
     error.value = null;
+    persistedFailure.value = null;
     isStreaming.value = true;
     isLoading.value = true;
 
@@ -119,6 +131,10 @@ export function useStream() {
       if (params.summary_model_id) {
         postBody.summary_model_id = params.summary_model_id;
       }
+      // Omit inheritance so the agent's current default remains authoritative.
+      if (params.reasoning_effort) {
+        postBody.reasoning_effort = params.reasoning_effort;
+      }
       // Include mcp_service_ids if provided (for Agent mode)
       if (params.mcp_service_ids !== undefined && params.mcp_service_ids.length > 0) {
         postBody.mcp_service_ids = params.mcp_service_ids;
@@ -146,6 +162,15 @@ export function useStream() {
 	  }
       if (params.suggestion_attribution) {
         postBody.suggestion_attribution = params.suggestion_attribution;
+      }
+      if (params.question_origin) {
+        postBody.question_origin = params.question_origin;
+      }
+      if (params.page_context) {
+        postBody.page_context = params.page_context;
+      }
+      if (params.assistant_access) {
+        postBody.assistant_access = params.assistant_access;
       }
       postBody.channel = embedToken ? "embed" : "web";
 
@@ -181,7 +206,19 @@ export function useStream() {
         onopen: async (res) => {
           // 401 is recoverable (refresh + replay); everything else is not.
           if (res.status === 401) throw new StreamAuthError(res.status);
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          if (!res.ok) {
+            // Only a server-confirmed stored turn should trigger a history reload.
+            // Do not render arbitrary error details or infer persistence from 404.
+            try {
+              const details = (await res.json())?.error?.details;
+              if (myGeneration === streamGeneration && details?.persisted_failure === true &&
+                  details.session_id === params.session_id &&
+                  typeof details.assistant_message_id === 'string' && details.assistant_message_id) {
+                persistedFailure.value = { sessionId: details.session_id, messageId: details.assistant_message_id };
+              }
+            } catch { /* A non-JSON HTTP failure has no persisted-turn metadata. */ }
+            throw new Error(`HTTP ${res.status}`);
+          }
           console.log(`[TTFB] response:headers request_id=${requestID} elapsed_ms=${(performance.now() - sentAt).toFixed(1)}`);
           isLoading.value = false;
         },
@@ -209,7 +246,11 @@ export function useStream() {
         },
 
         onclose: () => {
-          stopStream();
+          // A queued follow-up attaches via continue-stream while the previous
+          // POST may still be open waiting for the session title. Both share one
+          // controller, so only the current stream may stop it; otherwise the
+          // old connection closing cuts the follow-up off mid-answer.
+          if (myGeneration === streamGeneration) stopStream();
         },
       });
 
@@ -227,6 +268,9 @@ export function useStream() {
         reloginMessage: i18n.global.t('error.pleaseRelogin'),
       });
     } catch (err) {
+      // A superseded stream failing must not surface as the current error or
+      // abort the stream that replaced it (see onclose).
+      if (myGeneration !== streamGeneration) return
       error.value = err instanceof Error ? err.message : String(err)
       stopStream()
     }
@@ -256,6 +300,7 @@ export function useStream() {
     isStreaming,     // 是否在流式传输中
     isLoading,       // 初始连接状态
     error,
+    persistedFailure,
     lastStreamRequest,
     onChunk,
     startStream,     // 启动流

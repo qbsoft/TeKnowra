@@ -2,6 +2,11 @@ package types
 
 import "strings"
 
+// MaxInlineDocumentImages is the number of Markdown data-URI images the parser
+// stores in one pass. Producers must use a file export when a document exceeds
+// this budget, rather than leave unprocessed base64 in searchable content.
+const MaxInlineDocumentImages = 30
+
 // ReadRequest is the unified transport-agnostic request for document reading.
 // Set FileContent for file mode, URL for URL mode.
 type ReadRequest struct {
@@ -24,6 +29,10 @@ type ReadResult struct {
 	Error           string
 	IsAudio         bool   // true when the result contains raw audio data needing ASR transcription
 	AudioData       []byte // raw audio bytes for ASR processing
+	// SourceBlocks map rune ranges of MarkdownContent back to positions in
+	// the original file. Optional: engines that know no positions leave it
+	// empty.
+	SourceBlocks []SourceBlock
 }
 
 // ImageRef represents an image reference extracted from the document.
@@ -87,6 +96,9 @@ type ParsedChunk struct {
 	// >= 0 means this is a child chunk referencing the parent at this index
 	// in the ParentChunks slice of ProcessChunksOptions.
 	ParentIndex int
+
+	// SourceLocators point back into the original file.
+	SourceLocators SourceLocators
 }
 
 // EmbeddingContent returns the text that should be sent to the embedding
@@ -106,10 +118,11 @@ func (c ParsedChunk) EmbeddingContent() string {
 // ParsedParentChunk represents a parent chunk in the parent-child strategy.
 // Parent chunks are stored in DB for context retrieval but NOT vector-indexed.
 type ParsedParentChunk struct {
-	Content string
-	Seq     int
-	Start   int
-	End     int
+	Content        string
+	Seq            int
+	Start          int
+	End            int
+	SourceLocators SourceLocators
 }
 
 type ParsedImage struct {

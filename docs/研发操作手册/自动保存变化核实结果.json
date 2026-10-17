@@ -1,0 +1,196 @@
+{
+  "wal_valid_frames": 804,
+  "wal_commits": 97,
+  "flows": {
+    "f444fe58-0907-476b-a36a-236476570a56": {
+      "found_before": true,
+      "found_after": true,
+      "versions_seen": 2,
+      "frames": {
+        "before": 6,
+        "after": 800
+      },
+      "differences": [
+        {
+          "path": "/nodes/2/data/node/last_updated",
+          "before": "2026-10-16T08:13:21.600Z",
+          "after": "2026-10-17T14:43:30.101Z"
+        },
+        {
+          "path": "/viewport/x",
+          "before": 209.57198443579767,
+          "after": 304.7567049808429
+        },
+        {
+          "path": "/viewport/y",
+          "before": 240.24513618677042,
+          "after": 34.63601532567054
+        },
+        {
+          "path": "/viewport/zoom",
+          "before": 0.3159533073929961,
+          "after": 0.453639846743295
+        }
+      ],
+      "difference_count": 4,
+      "current_differences_from_before": [
+        {
+          "path": "/nodes/2/data/node/last_updated",
+          "before": "2026-10-16T08:13:21.600Z",
+          "after": "2026-10-17T14:43:30.101Z"
+        },
+        {
+          "path": "/viewport/x",
+          "before": 209.57198443579767,
+          "after": 304.7567049808429
+        },
+        {
+          "path": "/viewport/y",
+          "before": 240.24513618677042,
+          "after": 34.63601532567054
+        },
+        {
+          "path": "/viewport/zoom",
+          "before": 0.3159533073929961,
+          "after": 0.453639846743295
+        }
+      ],
+      "current_node_templates_equal": true,
+      "current_component_code_equal": true,
+      "current_other_fields_equal_after_removing_only_viewport_and_node_timestamp": true,
+      "intermediate_committed_versions_checked": 2,
+      "all_intermediate_changes_limited_to_viewport_and_node_timestamp": true,
+      "timestamp_changed_nodes": [
+        {
+          "node_id": "Agent-EXpSZ",
+          "display_name": "合同审查与协调",
+          "model_field_real_time_refresh": true,
+          "model_field_refresh_button": true,
+          "model_options_present": true,
+          "model_options_count": 5,
+          "api_key_field_present": true,
+          "api_key_empty": true
+        }
+      ]
+    },
+    "60fb3de4-422a-45b6-8d9a-b8f85520d05e": {
+      "found_before": true,
+      "found_after": true,
+      "versions_seen": 5,
+      "frames": {
+        "before": 719,
+        "after": 766
+      },
+      "differences": [
+        {
+          "path": "/nodes/6/data/node/last_updated",
+          "before": "2026-10-17T14:37:33.294Z",
+          "after": "2026-10-17T14:41:31.763Z"
+        },
+        {
+          "path": "/viewport/y",
+          "before": 80.31868131868129,
+          "after": 305.09532967032965
+        },
+        {
+          "path": "/viewport/zoom",
+          "before": 0.5274725274725275,
+          "after": 0.3181318681318681
+        }
+      ],
+      "difference_count": 3,
+      "current_differences_from_before": [
+        {
+          "path": "/nodes/6/data/node/last_updated",
+          "before": "2026-10-17T14:37:33.294Z",
+          "after": "2026-10-17T14:41:31.763Z"
+        },
+        {
+          "path": "/viewport/y",
+          "before": 80.31868131868129,
+          "after": 305.09532967032965
+        },
+        {
+          "path": "/viewport/zoom",
+          "before": 0.5274725274725275,
+          "after": 0.3181318681318681
+        }
+      ],
+      "current_node_templates_equal": true,
+      "current_component_code_equal": true,
+      "current_other_fields_equal_after_removing_only_viewport_and_node_timestamp": true,
+      "intermediate_committed_versions_checked": 2,
+      "all_intermediate_changes_limited_to_viewport_and_node_timestamp": true,
+      "timestamp_changed_nodes": [
+        {
+          "node_id": "Agent-platform",
+          "display_name": "业务智能体",
+          "model_field_real_time_refresh": true,
+          "model_field_refresh_button": true,
+          "model_options_present": true,
+          "model_options_count": 5,
+          "api_key_field_present": true,
+          "api_key_empty": true
+        }
+      ]
+    }
+  },
+  "release_store_unchanged": true,
+  "read_only_recovery": "Checksummed valid WAL frames replayed into in-memory SQLite only; historical before/after graph digests matched exactly; database not written.",
+  "release_verification": {
+    "release_store_unchanged": true,
+    "runtime_releases": [
+      {
+        "release_id": "0e1597f2-4998-44d6-b4b8-e94f8da9e301",
+        "label": "V3-统一审查范围与复核",
+        "active": false,
+        "graph_digest_matches_release": true,
+        "owner_matches": true
+      },
+      {
+        "release_id": "7491ffc8-7974-44ee-9237-c698021f1c17",
+        "label": "V2-适配结构化MCP结果",
+        "active": false,
+        "graph_digest_matches_release": true,
+        "owner_matches": true
+      },
+      {
+        "release_id": "74a24701-d774-4294-9da0-bbc67278faf6",
+        "label": "V1-多专家等价验收",
+        "active": false,
+        "graph_digest_matches_release": true,
+        "owner_matches": true
+      },
+      {
+        "release_id": "811164be-5552-4033-8e44-154c462d75a3",
+        "label": "合同附件制度技能计算-V1-20261016",
+        "active": false,
+        "graph_digest_matches_release": true,
+        "owner_matches": true
+      },
+      {
+        "release_id": "a60ec8ab-57e4-4a7c-9025-368d87360c1d",
+        "label": "合同附件制度技能计算-V2-配置显示",
+        "active": true,
+        "graph_digest_matches_release": true,
+        "owner_matches": true
+      },
+      {
+        "release_id": "aa8e3338-8808-4ec5-8d23-076f4b97082d",
+        "label": "V4-草稿直接采用制度术语",
+        "active": true,
+        "graph_digest_matches_release": true,
+        "owner_matches": true
+      }
+    ]
+  },
+  "root_cause": {
+    "frontend_bundle": "research/selection/langflow-decision-test-20261013/venv/Lib/site-packages/langflow/frontend/assets/index-CumK2M5X.js",
+    "mount_refresh_offset": 9338653,
+    "refresh_timestamp_offset": 8725101,
+    "node_autosave_offset": 1743841,
+    "flow_viewport_save_offset": 6183172,
+    "explanation": "原生Agent模型字段挂载时满足动态刷新条件（api_key字段为空），触发模板刷新；前端为刷新响应赋新last_updated，再经setNode触发自动保存。保存整张图时同时写入当前viewport。逐字段差异证实此轮实际只保存了节点时间戳和视图，模板、组件代码等其余字段未变。",
+    "frontend_bundle_sha256": "c562002be2a7797ad24a2872dbbf1dada8a970018349376f7b9c61b04bfd3876"
+  }
+}

@@ -4,6 +4,7 @@ import (
 	stderrors "errors"
 	"net/http"
 
+	"github.com/Tencent/WeKnora/internal/agent/hitl"
 	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/browserskill"
 	"github.com/Tencent/WeKnora/internal/config"
@@ -14,6 +15,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	secutils "github.com/Tencent/WeKnora/internal/utils"
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 )
 
 // Handler handles all HTTP requests related to conversation sessions
@@ -39,7 +41,13 @@ type Handler struct {
 	// after an agent turn completes. May be nil when the sandbox backend does
 	// not support artifact collection; handlers must check before using.
 	artifactCollector *service.ArtifactCollector
-	memoryService     interfaces.MemoryService // Service for cross-session long-term memory
+	// workspaceCheckpointer commits the sandbox /workspace at the end of each
+	// agent turn so session fork can roll back to a specific message. May be
+	// nil when the deployment has no sandbox backend.
+	workspaceCheckpointer *service.WorkspaceCheckpointer
+	// sandboxIDLookup resolves a session's bound sandbox without provisioning.
+	sandboxIDLookup SandboxIDLookup
+	memoryService   interfaces.MemoryService // Service for cross-session long-term memory
 	// userService / memberService back the sandbox terminal's self-contained
 	// handshake (browser WebSocket upgrades cannot send Authorization).
 	userService   interfaces.UserService
@@ -49,6 +57,26 @@ type Handler struct {
 	// selected agent so the sandbox is created with the same config a
 	// conversation turn would use.
 	terminalService *service.SandboxTerminalService
+	desktopService  *service.SandboxDesktopService
+	desktopTickets  service.SandboxDesktopTicketStore
+	desktopLast     service.SandboxDesktopLastStore
+	// redis backs the distributed desktop slot. Nil in Lite mode, where the
+	// in-process limiter is the correct degradation.
+	redis *redis.Client
+	// forkService branches a session at a chosen user message. May be nil in
+	// deployments where fork is not wired; ForkSession checks.
+	forkService sessionForker
+	// rewindService truncates the current session at a chosen message. May
+	// be nil in deployments where rewind is not wired; RewindSession checks.
+	rewindService sessionRewinder
+	// approvedProjectDirs is the user-approved ProjectDirs list used to
+	// validate CreateSession's optional project_dir. Nil means none are
+	// approved, so a non-empty project_dir is rejected.
+	approvedProjectDirs HostProjectDirsLoader
+	// promptBroker and suspendedRuns resume and supersede runs suspended on
+	// agent prompts. Nil leaves suspended prompts to the reaper.
+	promptBroker  *hitl.Broker
+	suspendedRuns *service.SuspendedRunService
 }
 
 // NewHandler creates a new instance of Handler with all necessary dependencies
@@ -71,34 +99,50 @@ func NewHandler(
 	imageResolver *docparser.ImageResolver,
 	temporaryDocuments interfaces.TemporaryDocumentService,
 	artifactCollector *service.ArtifactCollector,
+	workspaceCheckpointer *service.WorkspaceCheckpointer,
+	sandboxIDLookup SandboxIDLookup,
 	memoryService interfaces.MemoryService,
 	userService interfaces.UserService,
 	memberService interfaces.TenantMemberService,
 	terminalService *service.SandboxTerminalService,
 	browserSkill *browserskill.Manager,
+	desktopService *service.SandboxDesktopService,
+	desktopTickets service.SandboxDesktopTicketStore,
+	desktopLast service.SandboxDesktopLastStore,
+	rdb *redis.Client,
+	forkService *service.SessionForkService,
+	rewindService *service.SessionRewindService,
+	approvedProjectDirs HostProjectDirsLoader,
 ) *Handler {
-	return &Handler{
-		browserSkill:         browserSkill,
-		sessionService:       sessionService,
-		messageService:       messageService,
-		suggestionService:    suggestionService,
-		streamManager:        streamManager,
-		config:               config,
-		knowledgebaseService: knowledgebaseService,
-		customAgentService:   customAgentService,
-		tenantService:        tenantService,
-		agentShareService:    agentShareService,
-		kbShareService:       kbShareService,
-		fileService:          fileService,
-		resourceCatalog:      resourceCatalog,
-		storageResolver:      storageResolver,
-		modelService:         modelService,
-		temporaryDocuments:   temporaryDocuments,
-		artifactCollector:    artifactCollector,
-		memoryService:        memoryService,
-		userService:          userService,
-		memberService:        memberService,
-		terminalService:      terminalService,
+	h := &Handler{
+		browserSkill:          browserSkill,
+		sessionService:        sessionService,
+		messageService:        messageService,
+		suggestionService:     suggestionService,
+		streamManager:         streamManager,
+		config:                config,
+		knowledgebaseService:  knowledgebaseService,
+		customAgentService:    customAgentService,
+		tenantService:         tenantService,
+		agentShareService:     agentShareService,
+		kbShareService:        kbShareService,
+		fileService:           fileService,
+		resourceCatalog:       resourceCatalog,
+		storageResolver:       storageResolver,
+		modelService:          modelService,
+		temporaryDocuments:    temporaryDocuments,
+		artifactCollector:     artifactCollector,
+		workspaceCheckpointer: workspaceCheckpointer,
+		sandboxIDLookup:       sandboxIDLookup,
+		memoryService:         memoryService,
+		userService:           userService,
+		memberService:         memberService,
+		terminalService:       terminalService,
+		desktopService:        desktopService,
+		desktopTickets:        desktopTickets,
+		desktopLast:           desktopLast,
+		redis:                 rdb,
+		approvedProjectDirs:   approvedProjectDirs,
 		attachmentProcessor: NewAttachmentProcessor(
 			fileService,
 			documentReader,
@@ -106,11 +150,19 @@ func NewHandler(
 			modelService,
 		),
 	}
+	if forkService != nil {
+		h.forkService = forkService
+	}
+	if rewindService != nil {
+		h.rewindService = rewindService
+	}
+	return h
 }
 
 // CreateSession godoc
 // @Summary      创建会话
-// @Description  创建新的对话会话
+// @Description  创建新的对话会话。
+// @Description  kind 为空时为普通会话，assistant 为助手会话。
 // @Tags         会话
 // @Accept       json
 // @Produce      json
@@ -127,6 +179,11 @@ func (h *Handler) CreateSession(c *gin.Context) {
 	if err := c.ShouldBindJSON(&request); err != nil {
 		logger.Error(ctx, "Failed to validate session creation parameters", err)
 		c.Error(errors.NewBadRequestError(err.Error()))
+		return
+	}
+
+	if !types.IsValidSessionKind(request.Kind) {
+		_ = c.Error(errors.NewBadRequestError("invalid session kind"))
 		return
 	}
 
@@ -147,11 +204,19 @@ func (h *Handler) CreateSession(c *gin.Context) {
 		tenantID,
 	)
 
+	hostDir, ok := bindHostWorkspaceDir(request.ProjectDir, h.approvedDirs())
+	if !ok {
+		_ = c.Error(errors.NewBadRequestError("project_dir is not an approved project directory"))
+		return
+	}
+
 	// Create session object with base properties
 	createdSession := &types.Session{
-		TenantID:    tenantID.(uint64),
-		Title:       request.Title,
-		Description: types.SanitizeClientSessionDescription(request.Description, ""),
+		TenantID:         tenantID.(uint64),
+		Kind:             request.Kind,
+		Title:            request.Title,
+		Description:      types.SanitizeClientSessionDescription(request.Description, ""),
+		HostWorkspaceDir: hostDir,
 	}
 	// Attach the calling user as the session owner when available.
 	// API-key callers scope sessions per external user when configured;
@@ -232,6 +297,7 @@ func (h *Handler) GetSession(c *gin.Context) {
 // @Produce      json
 // @Param        page       query     int     false  "页码"
 // @Param        page_size  query     int     false  "每页数量"
+// @Param        kind       query     string  false  "会话类型：空值仅普通会话；assistant 仅当前用户的助手会话" Enums(assistant)
 // @Param        keyword    query     string  false  "标题模糊搜索"
 // @Param        source     query     string  false  "来源过滤：web / embed / api / feishu / wechat / slack / ...（api、embed、IM 渠道需 Admin+）"
 // @Param        agent_id   query     string  false  "按 Agent 过滤（仅对 IM 会话生效）"
@@ -242,6 +308,11 @@ func (h *Handler) GetSession(c *gin.Context) {
 // @Router       /sessions [get]
 func (h *Handler) GetSessionsByTenant(c *gin.Context) {
 	ctx := c.Request.Context()
+	kind := c.Query("kind")
+	if !types.IsValidSessionKind(kind) {
+		_ = c.Error(errors.NewBadRequestError("invalid session kind"))
+		return
+	}
 
 	// Parse pagination parameters from query
 	var pagination types.Pagination
@@ -253,8 +324,9 @@ func (h *Handler) GetSessionsByTenant(c *gin.Context) {
 
 	// Response items always include pin state and (when available) IM origin
 	// fields so the frontend can render pin icons / source badges without a
-	// second roundtrip. Unset filter params behave like "no filter".
+	// second roundtrip. An omitted kind selects normal conversations.
 	result, err := h.sessionService.ListSessions(ctx, &types.SessionListQuery{
+		Kind:     kind,
 		Keyword:  c.Query("keyword"),
 		Source:   c.Query("source"),
 		AgentID:  c.Query("agent_id"),

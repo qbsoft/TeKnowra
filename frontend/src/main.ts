@@ -2,12 +2,12 @@ import { createApp } from "vue";
 import { createPinia } from "pinia";
 import App from "./App.vue";
 import router from "./router";
-import "./assets/fonts.css";
 import TDesign from "tdesign-vue-next";
 // 引入组件库的少量全局样式变量
 import "tdesign-vue-next/dist/tdesign.css";
 import "@/assets/theme/theme.css";
 import "@/assets/teknowra-branding.css"; // fork 自己的品牌样式:隐藏指向上游仓库的文档链接
+import "@/assets/theme/tdesign-overrides.less";
 import "@/assets/dropdown-menu.less";
 import "@/components/css/chat-hljs-dark.less";
 // vue-virtual-scroller ships its own tiny stylesheet — required for

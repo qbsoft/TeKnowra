@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/rand"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
+	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -36,6 +38,7 @@ const (
 
 // customAgentService implements the CustomAgentService interface
 type customAgentService struct {
+	cfg            *config.Config
 	repo           interfaces.CustomAgentRepository
 	chunkRepo      interfaces.ChunkRepository
 	kbService      interfaces.KnowledgeBaseService
@@ -43,6 +46,7 @@ type customAgentService struct {
 	wikiPageRepo   interfaces.WikiPageRepository
 	tagRepo        interfaces.KnowledgeTagRepository
 	knowledgeRepo  interfaces.KnowledgeRepository
+	agentShareRepo interfaces.AgentShareRepository
 }
 
 // NewCustomAgentService creates a new custom agent service
@@ -54,8 +58,11 @@ func NewCustomAgentService(
 	wikiPageRepo interfaces.WikiPageRepository,
 	tagRepo interfaces.KnowledgeTagRepository,
 	knowledgeRepo interfaces.KnowledgeRepository,
+	agentShareRepo interfaces.AgentShareRepository,
+	cfg *config.Config,
 ) interfaces.CustomAgentService {
 	return &customAgentService{
+		cfg:            cfg,
 		repo:           repo,
 		chunkRepo:      chunkRepo,
 		kbService:      kbService,
@@ -63,6 +70,7 @@ func NewCustomAgentService(
 		wikiPageRepo:   wikiPageRepo,
 		tagRepo:        tagRepo,
 		knowledgeRepo:  knowledgeRepo,
+		agentShareRepo: agentShareRepo,
 	}
 }
 
@@ -98,9 +106,10 @@ func (s *customAgentService) CreateAgent(ctx context.Context, agent *types.Custo
 	agent.CreatedAt = time.Now()
 	agent.UpdatedAt = time.Now()
 
-	// Ensure agent mode is set for user-created agents
+	// An omitted mode follows the editor: smart-reasoning, so MCP and skills
+	// work. An explicit quick-answer is kept.
 	if agent.Config.AgentMode == "" {
-		agent.Config.AgentMode = types.AgentModeQuickAnswer
+		agent.Config.AgentMode = types.AgentModeSmartReasoning
 	}
 
 	// Cannot create built-in agents
@@ -109,6 +118,9 @@ func (s *customAgentService) CreateAgent(ctx context.Context, agent *types.Custo
 	// Set defaults
 	agent.EnsureDefaults()
 	if err := agent.Config.QuestionSuggestions.Validate(); err != nil {
+		return nil, err
+	}
+	if err := agent.Config.ValidateExecutionEngine(); err != nil {
 		return nil, err
 	}
 
@@ -169,7 +181,7 @@ func (s *customAgentService) GetAgentByID(ctx context.Context, id string) (*type
 	}
 
 	agent.EnsureDefaults()
-	return agent, nil
+	return s.withEffectiveEino(agent), nil
 }
 
 // GetAgentByIDAndTenant retrieves an agent by ID and tenant (for shared agents; does not resolve built-in)
@@ -186,7 +198,7 @@ func (s *customAgentService) GetAgentByIDAndTenant(ctx context.Context, id strin
 		return nil, err
 	}
 	agent.EnsureDefaults()
-	return agent, nil
+	return s.withEffectiveEino(agent), nil
 }
 
 // ListAgents lists all agents for the current tenant (including built-in agents)
@@ -240,15 +252,22 @@ func (s *customAgentService) ListAgents(ctx context.Context) ([]*types.CustomAge
 	// Add custom agents
 	for _, agent := range allAgents {
 		if !types.IsBuiltinAgentID(agent.ID) {
-			result = append(result, agent)
+			result = append(result, s.withEffectiveEino(agent))
 		}
 	}
 
 	return result, nil
 }
 
-// UpdateAgent updates an agent's information
-func (s *customAgentService) UpdateAgent(ctx context.Context, agent *types.CustomAgent) (*types.CustomAgent, error) {
+// UpdateAgent updates an agent's information.
+//
+// avatar carries the field presence the agent struct cannot: nil means the
+// caller did not send an avatar and the stored one must survive, a pointer to
+// "" is an explicit clear. Assigning agent.Avatar unconditionally made every
+// config-only PUT erase the avatar while still answering 200.
+func (s *customAgentService) UpdateAgent(
+	ctx context.Context, agent *types.CustomAgent, avatar *string,
+) (*types.CustomAgent, error) {
 	if agent.ID == "" {
 		logger.Error(ctx, "Agent ID is empty")
 		return nil, errors.New("agent ID cannot be empty")
@@ -287,13 +306,31 @@ func (s *customAgentService) UpdateAgent(ctx context.Context, agent *types.Custo
 	// Update fields
 	existingAgent.Name = agent.Name
 	existingAgent.Description = agent.Description
-	existingAgent.Avatar = agent.Avatar
+	// An absent avatar keeps the stored one; only a sent value replaces it.
+	if avatar != nil {
+		// Second length check, for non-HTTP callers that never pass through
+		// the handler. Same validator, so the varchar(64) bound does not end
+		// up duplicated as two constants.
+		if err := (&types.CustomAgent{Avatar: *avatar}).ValidateAvatar(); err != nil {
+			return nil, err
+		}
+		existingAgent.Avatar = *avatar
+	}
+	if err := s.checkSharedAgentKBScope(ctx, existingAgent, agent.Config); err != nil {
+		return nil, err
+	}
+	if _, legacy := s.cfg.EinoDefinition(existingAgent.ID); legacy && agent.Config.ExecutionEngine != "" && agent.Config.ExecutionEngine != "eino" {
+		return nil, fmt.Errorf("该智能体仍有旧Eino绑定，请保留Eino引擎或新建其他引擎智能体")
+	}
 	existingAgent.Config = agent.Config
 	existingAgent.UpdatedAt = time.Now()
 
 	// Ensure defaults
 	existingAgent.EnsureDefaults()
 	if err := existingAgent.Config.QuestionSuggestions.Validate(); err != nil {
+		return nil, err
+	}
+	if err := existingAgent.Config.ValidateExecutionEngine(); err != nil {
 		return nil, err
 	}
 
@@ -308,6 +345,35 @@ func (s *customAgentService) UpdateAgent(ctx context.Context, agent *types.Custo
 
 	logger.Infof(ctx, "Custom agent updated successfully, ID: %s", agent.ID)
 	return existingAgent, nil
+}
+
+// checkSharedAgentKBScope keeps an edit from widening a shared agent's KB
+// scope beyond what the editor could share: the share was checked when it was
+// made, and receivers see the agent's current scope.
+func (s *customAgentService) checkSharedAgentKBScope(
+	ctx context.Context, existing *types.CustomAgent, config types.CustomAgentConfig,
+) error {
+	if s.agentShareRepo == nil || s.kbService == nil {
+		return nil
+	}
+	shares, err := s.agentShareRepo.ListByAgent(ctx, existing.ID)
+	if err != nil {
+		return err
+	}
+	shared := false
+	for _, share := range shares {
+		if share != nil && share.SourceTenantID == existing.TenantID {
+			shared = true
+			break
+		}
+	}
+	if !shared {
+		return nil
+	}
+	updated := *existing
+	updated.Config = config
+	userID, _ := types.UserIDFromContext(ctx)
+	return checkAgentKBScopeShareable(ctx, s.kbService.GetKnowledgeBasesByIDsOnly, existing, &updated, userID)
 }
 
 // updateBuiltinAgent updates a built-in agent's configuration (but not basic info)
@@ -531,6 +597,7 @@ func (s *customAgentService) getSuggestedQuestions(
 	if err := types.AuthorizeTenantAPIKeyOptionalTagIDs(ctx, scopeTagIDs); err != nil {
 		return nil, err
 	}
+	knowledgeIDs = s.readableSuggestionKnowledgeIDs(ctx, knowledgeIDs)
 
 	// Get tenant ID from context
 	tenantID, ok := types.TenantIDFromContext(ctx)
@@ -612,13 +679,23 @@ func (s *customAgentService) getSuggestedQuestions(
 			// e.g. a quick-answer (RAG-only) agent doesn't surface wiki-only
 			// KBs whose wiki pages it could never answer from. Same filter
 			// the @ mention dropdown applies on the frontend.
-			capFilter := tools.DeriveKBFilterForAgent(agent.Config.AgentMode, agent.Config.AllowedTools)
+			mode, allowed := agent.Config.AgentMode, agent.Config.AllowedTools
+			capFilter := tools.DeriveKBFilterForAgent(mode, allowed)
+			accept := func(kb *types.KnowledgeBase) bool {
+				return capFilter.IsEmpty() || tools.KBSatisfiesAgentRequirements(kb.Capabilities(), mode, allowed)
+			}
 			for _, kb := range kbs {
-				if !capFilter.IsEmpty() &&
-					!tools.KBSatisfiesAgentRequirements(kb.Capabilities(), agent.Config.AgentMode, agent.Config.AllowedTools) {
-					continue
+				if accept(kb) {
+					effectiveKBIDs = append(effectiveKBIDs, kb.ID)
 				}
-				effectiveKBIDs = append(effectiveKBIDs, kb.ID)
+			}
+			// Match the chat runtime's "all" scope, which also reaches KBs shared
+			// into the caller's tenant; otherwise a tenant whose only KB is shared
+			// sees no starters until it @mentions that KB explicitly.
+			for _, kb := range s.sharedSuggestionKnowledgeBases(ctx, tenantID, agent) {
+				if accept(kb) {
+					effectiveKBIDs = mergeUniqueStrings(effectiveKBIDs, []string{kb.ID})
+				}
 			}
 		case "selected":
 			effectiveKBIDs = agent.Config.KnowledgeBases
@@ -708,6 +785,7 @@ func (s *customAgentService) getSuggestedQuestions(
 				Question:        meta.StandardQuestion,
 				Source:          "faq",
 				KnowledgeBaseID: chunk.KnowledgeBaseID,
+				KnowledgeID:     chunk.KnowledgeID,
 			})
 		}
 	}
@@ -741,6 +819,7 @@ func (s *customAgentService) getSuggestedQuestions(
 				Question:        q,
 				Source:          "document",
 				KnowledgeBaseID: chunk.KnowledgeBaseID,
+				KnowledgeID:     chunk.KnowledgeID,
 			})
 		}
 	}
@@ -1068,6 +1147,65 @@ func wikiSuggestionFromPage(page *types.WikiPage, locale string) string {
 	}
 }
 
+// maxSuggestionKnowledgeIDs bounds the per-document lookups below; a
+// suggestion scope is a handful of @mentioned or retrieved documents.
+const maxSuggestionKnowledgeIDs = 50
+
+// readableSuggestionKnowledgeIDs keeps the documents the caller may read.
+// KB IDs are filtered the same way in groupKBIDsByEffectiveTenant, but
+// document IDs (from the request or a message snapshot, which records them
+// before a shared agent's scope is applied) reach a tenant's chunks directly:
+// each is resolved to its KB and checked, including a shared agent's scope.
+func (s *customAgentService) readableSuggestionKnowledgeIDs(ctx context.Context, knowledgeIDs []string) []string {
+	if len(knowledgeIDs) == 0 {
+		return knowledgeIDs
+	}
+	if s.knowledgeRepo == nil {
+		return nil
+	}
+	if len(knowledgeIDs) > maxSuggestionKnowledgeIDs {
+		knowledgeIDs = knowledgeIDs[:maxSuggestionKnowledgeIDs]
+	}
+	permissions := access.NewKBPermissions(ctx, s.kbShareService)
+	readable := make([]string, 0, len(knowledgeIDs))
+	for _, id := range knowledgeIDs {
+		knowledge, err := s.knowledgeRepo.GetKnowledgeByIDOnly(ctx, id)
+		if err != nil || knowledge == nil {
+			continue
+		}
+		ok, err := permissions.Check(knowledge.KnowledgeBaseID, knowledge.TenantID, types.OrgRoleViewer)
+		if err == nil && ok {
+			readable = append(readable, id)
+		}
+	}
+	return readable
+}
+
+// sharedSuggestionKnowledgeBases lists the KBs shared into the caller's tenant.
+// A shared agent keeps its owner's scope, so it never picks up the borrower's
+// shares.
+func (s *customAgentService) sharedSuggestionKnowledgeBases(
+	ctx context.Context,
+	tenantID uint64,
+	agent *types.CustomAgent,
+) []*types.KnowledgeBase {
+	if s.kbShareService == nil || agent.TenantID != tenantID {
+		return nil
+	}
+	shared, err := s.kbShareService.ListSharedKnowledgeBases(ctx, tenantID, types.TenantRoleFromContext(ctx))
+	if err != nil {
+		logger.Warnf(ctx, "Failed to list shared knowledge bases for suggestions: %v", err)
+		return nil
+	}
+	kbs := make([]*types.KnowledgeBase, 0, len(shared))
+	for _, info := range shared {
+		if info != nil && info.KnowledgeBase != nil {
+			kbs = append(kbs, info.KnowledgeBase)
+		}
+	}
+	return kbs
+}
+
 // groupKBIDsByEffectiveTenant resolves each kbID to the tenant whose chunk
 // rows back that KB, so cross-tenant shares can be queried correctly:
 //   - In-tenant KBs map to the caller's tenant id.
@@ -1129,4 +1267,19 @@ func isEnglishLocale(locale string) bool {
 		return true
 	}
 	return false
+}
+
+// Enrich an authorized read without changing the stored historical config.
+func (s *customAgentService) withEffectiveEino(a *types.CustomAgent) *types.CustomAgent {
+	if a == nil || a.IsBuiltin || a.Config.ExecutionEngine != "" {
+		return a
+	}
+	definition, ok := s.cfg.EinoDefinition(a.ID)
+	if !ok {
+		return a
+	}
+	clone := *a
+	clone.Config.ExecutionEngine = "eino"
+	clone.Config.EinoDefinition = definition
+	return &clone
 }

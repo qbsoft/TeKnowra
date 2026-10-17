@@ -1,5 +1,24 @@
 <template>
-  <div class="action-card interaction-inline" :class="{ 'action-pending': !resolved }">
+  <div v-if="interactive" class="prompt-panel" @click.stop>
+    <div class="prompt-question">{{ $t('agentStream.mcpOAuth.dockQuestion', { target: targetLabel }) }}</div>
+    <div class="prompt-desc">{{ $t('agentStream.mcpOAuth.desc') }}</div>
+
+    <div class="prompt-footer">
+      <div class="prompt-footer-meta">
+        <span v-if="secondsLeft >= 0" class="action-timer" :class="timerClass">{{ formatCountdown(secondsLeft) }}</span>
+      </div>
+      <div class="prompt-footer-actions">
+        <button type="button" class="prompt-btn" :disabled="canceling || authorizing" @click="skip">
+          {{ $t('agentStream.mcpOAuth.skip') }}
+        </button>
+        <button type="button" class="prompt-btn is-primary" :disabled="authorizing || canceling" @click="authorize">
+          {{ $t('agentStream.mcpOAuth.authorize') }}<span class="prompt-btn-key" aria-hidden="true">↵</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div v-else class="action-card interaction-inline" :class="{ 'action-pending': !resolved }">
     <div class="action-header no-results">
       <div class="action-title">
         <t-icon class="action-title-icon" :name="headerIcon" />
@@ -8,23 +27,14 @@
     </div>
     <div class="interaction-status-summary">
       <div class="results-summary-text">
-        <span v-if="resolved" class="status-label">{{ statusLine }}</span>
-        <span v-if="!resolved" class="inline-actions">
-          <button type="button" class="inline-action" :disabled="canceling || authorizing" @click="skip">
-            {{ $t('agentStream.mcpOAuth.skip') }}
-          </button>
+        <template v-if="awaitingInDock">
+          <span class="status-label">{{ $t('agentStream.promptDock.waiting') }}</span>
           <span class="inline-dot">·</span>
-          <button type="button" class="inline-action is-primary" :disabled="authorizing || canceling"
-            @click="authorize">
-            {{ $t('agentStream.mcpOAuth.authorize') }}
+          <button type="button" class="inline-action is-primary" @click.stop="dock?.focus(pendingId)">
+            {{ $t('agentStream.promptDock.handle') }}
           </button>
-        </span>
-        <template v-if="!resolved && secondsLeft >= 0">
-          <span class="inline-dot">·</span>
-          <span class="action-timer" :class="timerClass">
-            {{ formatCountdown(secondsLeft) }}
-          </span>
         </template>
+        <span v-else class="status-label">{{ statusLine }}</span>
       </div>
     </div>
   </div>
@@ -44,14 +54,25 @@ import {
   MCP_OAUTH_CALLBACK_PATH,
 } from '@/api/mcp-service'
 import {
+  MCP_OAUTH_SIGNAL_KEY,
+  claimMcpOAuthResume,
+  mcpOAuthDoneUrl,
+  releaseMcpOAuthResume,
+  watchMcpOAuthPopup,
+} from '@/api/mcpOAuthDone'
+import {
   cancelEmbedMCPOAuth,
   getEmbedMCPOAuthAuthorizeURL,
   getEmbedMCPOAuthStatus,
   resolveEmbedMCPOAuth,
 } from '@/api/embed'
+import { markPromptSubmitted, promptSubmission, usePromptDock } from '@/composables/usePromptDock'
+import { isSubmitKey } from '@/utils/promptKeys'
 
 const props = defineProps<{
   pendingId: string
+  // dock: the authorize prompt, shown above the composer. inline: the timeline row.
+  variant?: 'dock' | 'inline'
   serviceId: string
   serviceName: string
   mcpToolName?: string
@@ -79,12 +100,20 @@ const useEmbedOAuth = () =>
   && props.embedVisitorId
 
 const { t } = useI18n()
+const dock = usePromptDock()
+
+const submission = computed(() => promptSubmission(props.pendingId))
+const open = computed(() => !props.resolved && !submission.value)
+// Without a dock (a view that does not provide one) the row stays answerable.
+const interactive = computed(() => open.value && (props.variant === 'dock' || !dock))
+const awaitingInDock = computed(() => open.value && props.variant !== 'dock' && Boolean(dock?.isDocked(props.pendingId)))
 
 const authorizing = ref(false)
 const canceling = ref(false)
 const now = ref(Date.now())
 let clock: number | null = null
-let poll: number | null = null
+let stopPopupWatch: (() => void) | null = null
+let stopResumePoll: (() => void) | null = null
 
 const deadline = computed(() => {
   const base = (props.requestedAt || 0) * 1000
@@ -125,7 +154,11 @@ const mainTitle = computed(() => {
 })
 
 const statusLine = computed(() => {
-  if (!props.resolved) return t('agentStream.mcpOAuth.waitingStatus')
+  if (!props.resolved) {
+    if (submission.value?.authorized) return t('agentStream.mcpOAuth.authorizedTag')
+    if (submission.value) return t('agentStream.mcpOAuth.canceledTag')
+    return t('agentStream.mcpOAuth.waitingStatus')
+  }
   if (props.authorized) return t('agentStream.mcpOAuth.authorizedTag')
   if (props.timedOut) return t('agentStream.mcpOAuth.timedOutTag')
   return t('agentStream.mcpOAuth.canceledTag')
@@ -139,9 +172,48 @@ function formatCountdown(s: number): string {
 }
 
 function stopPoll() {
-  if (poll) {
-    window.clearInterval(poll)
-    poll = null
+  if (stopPopupWatch) {
+    stopPopupWatch()
+    stopPopupWatch = null
+  }
+  if (stopResumePoll) {
+    stopResumePoll()
+    stopResumePoll = null
+  }
+}
+
+// 令牌记上之后就把暂停的对话放开。不看某一次弹窗还在不在：
+// 弹窗跨站时经常像已经关掉，卡片也可能被重新挂上，原来的那次询问就丢了。
+async function resumeIfTokenReady() {
+  if (props.resolved || canceling.value || useEmbedOAuth()) return
+  let ok = false
+  try {
+    ok = await getMCPOAuthStatus(props.serviceId, undefined, sharedAgentScope.value)
+  } catch {
+    return
+  }
+  if (!ok || props.resolved || canceling.value) return
+  if (!claimMcpOAuthResume(props.pendingId)) return
+  try {
+    await resolveMCPOAuth(
+      props.pendingId,
+      { service_id: props.serviceId, decision: 'authorize' },
+      sharedAgentScope.value,
+    )
+    try {
+      await refreshMCPMetadata(props.serviceId)
+    } catch {
+      /* next describe/list will live-fill this user's directory */
+    }
+    markPromptSubmitted(props.pendingId, { authorized: true })
+    MessagePlugin.success(t('agentStream.mcpOAuth.authorizedToast'))
+    authorizing.value = false
+  } catch (e: any) {
+    const msg = e?.response?.data?.error?.message || e?.message || t('agentStream.mcpOAuth.resumeFailed')
+    if (!/already completed|already resolved/i.test(String(msg))) {
+      MessagePlugin.error(msg)
+    }
+    releaseMcpOAuthResume(props.pendingId)
   }
 }
 
@@ -161,10 +233,13 @@ const skip = async () => {
     } else {
       await cancelMCPOAuth(props.pendingId, sharedAgentScope.value)
     }
+    markPromptSubmitted(props.pendingId, { authorized: false })
   } catch (e: any) {
     const msg = e?.response?.data?.error?.message || e?.message || t('agentStream.mcpOAuth.skipFailed')
     MessagePlugin.error(msg)
   } finally {
+    stopPoll()
+    authorizing.value = false
     canceling.value = false
   }
 }
@@ -183,9 +258,11 @@ const authorize = async () => {
   authorizing.value = true
   try {
     const redirectUri = window.location.origin + MCP_OAUTH_CALLBACK_PATH
+    // 嵌入页仍回到嵌入地址（那边有自己的落脚提示）。平台对话不能把弹窗送回对话本身，
+    // 否则会再开一份对话，原来正在回答的那一页停止往下走。
     const frontendRedirect = useEmbedOAuth()
-      ? window.location.origin + window.location.pathname + window.location.search
-      : window.location.origin + '/'
+      ? window.location.pathname + window.location.search
+      : mcpOAuthDoneUrl()
     const authorization = useEmbedOAuth()
       ? await getEmbedMCPOAuthAuthorizeURL(
         props.embedChannelId!,
@@ -206,29 +283,31 @@ const authorize = async () => {
       return
     }
     const popup = window.open(authorization.authorizationUrl, 'mcp_oauth', 'width=600,height=720')
-    poll = window.setInterval(async () => {
-      const closed = !popup || popup.closed
-      let ok = false
-      try {
-        ok = useEmbedOAuth()
-          ? await getEmbedMCPOAuthStatus(
-            props.embedChannelId!,
-            props.embedToken!,
-            props.embedSessionId!,
-            props.embedSessionSig!,
-            props.embedVisitorId!,
-            props.serviceId,
-            authorization.authorizationAttempt,
-          )
-          : await getMCPOAuthStatus(props.serviceId, authorization.authorizationAttempt, sharedAgentScope.value)
-      } catch {
-        /* transient; keep polling */
-      }
-      if (ok) {
-        stopPoll()
-        try { popup?.close() } catch { /* cross-origin close may throw */ }
-        try {
-          if (useEmbedOAuth()) {
+    if (!popup) {
+      MessagePlugin.error(t('agentStream.mcpOAuth.startFailed'))
+      authorizing.value = false
+      return
+    }
+    if (stopPopupWatch) {
+      stopPopupWatch()
+      stopPopupWatch = null
+    }
+    stopPopupWatch = watchMcpOAuthPopup(
+      popup,
+      () => useEmbedOAuth()
+        ? getEmbedMCPOAuthStatus(
+          props.embedChannelId!,
+          props.embedToken!,
+          props.embedSessionId!,
+          props.embedSessionSig!,
+          props.embedVisitorId!,
+          props.serviceId,
+          authorization.authorizationAttempt,
+        )
+        : getMCPOAuthStatus(props.serviceId, authorization.authorizationAttempt, sharedAgentScope.value),
+      async () => {
+        if (useEmbedOAuth()) {
+          try {
             await resolveEmbedMCPOAuth(
               props.embedChannelId!,
               props.embedToken!,
@@ -238,25 +317,21 @@ const authorize = async () => {
               props.pendingId,
               { service_id: props.serviceId, decision: 'authorize' },
             )
-          } else {
-            await resolveMCPOAuth(props.pendingId, { service_id: props.serviceId, decision: 'authorize' }, sharedAgentScope.value)
-            try {
-              await refreshMCPMetadata(props.serviceId)
-            } catch {
-              /* next describe/list will live-fill this user's directory */
-            }
+            markPromptSubmitted(props.pendingId, { authorized: true })
+            MessagePlugin.success(t('agentStream.mcpOAuth.authorizedToast'))
+          } catch (e: any) {
+            const msg = e?.response?.data?.error?.message || e?.message || t('agentStream.mcpOAuth.resumeFailed')
+            MessagePlugin.error(msg)
           }
-          MessagePlugin.success(t('agentStream.mcpOAuth.authorizedToast'))
-        } catch (e: any) {
-          const msg = e?.response?.data?.error?.message || e?.message || t('agentStream.mcpOAuth.resumeFailed')
-          MessagePlugin.error(msg)
+          authorizing.value = false
+          return
         }
+        await resumeIfTokenReady()
+      },
+      () => {
         authorizing.value = false
-      } else if (closed) {
-        stopPoll()
-        authorizing.value = false
-      }
-    }, 1500)
+      },
+    )
   } catch (e: any) {
     const msg = e?.response?.data?.error?.message || e?.message || t('agentStream.mcpOAuth.startFailed')
     MessagePlugin.error(msg)
@@ -268,12 +343,32 @@ onMounted(() => {
   clock = window.setInterval(() => {
     now.value = Date.now()
   }, 1000)
+  if (props.resolved || useEmbedOAuth()) return
+  const onStorage = (event: StorageEvent) => {
+    if (event.key === MCP_OAUTH_SIGNAL_KEY) void resumeIfTokenReady()
+  }
+  window.addEventListener('storage', onStorage)
+  const timer = window.setInterval(() => { void resumeIfTokenReady() }, 1500)
+  stopResumePoll = () => {
+    window.clearInterval(timer)
+    window.removeEventListener('storage', onStorage)
+  }
+  void resumeIfTokenReady()
 })
 
 onBeforeUnmount(() => {
   if (clock) window.clearInterval(clock)
   stopPoll()
 })
+
+/** Enter starts authorization while docked. */
+const handleKey = (e: KeyboardEvent): boolean => {
+  if (!interactive.value || !isSubmitKey(e) || authorizing.value || canceling.value) return false
+  void authorize()
+  return true
+}
+
+defineExpose({ handleKey })
 </script>
 
 <style scoped lang="less">

@@ -282,17 +282,17 @@ func renderJobList(jobs []*types.AgentCronJob) string {
 			b.WriteString("\n")
 
 			if job.LastError != "" {
-				fmt.Fprintf(&b, "   错误：%s\n", excerpt(job.LastError, 200))
+				fmt.Fprintf(&b, "   错误：%s\n", cronjobExcerpt(job.LastError, 200))
 			}
 			if job.LastOutput != "" {
-				fmt.Fprintf(&b, "   结果：%s\n", excerpt(job.LastOutput, listOutputExcerpt))
+				fmt.Fprintf(&b, "   结果：%s\n", cronjobExcerpt(job.LastOutput, listOutputExcerpt))
 			}
 		}
 	}
 	return b.String()
 }
 
-func excerpt(s string, limit int) string {
+func cronjobExcerpt(s string, limit int) string {
 	s = strings.TrimSpace(strings.ReplaceAll(s, "\n", " "))
 	runes := []rune(s)
 	if len(runes) <= limit {

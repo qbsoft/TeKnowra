@@ -1,0 +1,44 @@
+{
+  "bindings": [
+    {
+      "agent_id": "REPLACE_AGENT_UUID",
+      "flow_id": "REPLACE_EDITOR_FLOW_UUID",
+      "workspace_id": 1,
+      "models": [
+        "REPLACE_MODEL_UUID"
+      ],
+      "knowledge_bases": [
+        "REPLACE_KB_UUID"
+      ],
+      "tools": [
+        {
+          "service_id": "REPLACE_MCP_UUID",
+          "name": "find_customer"
+        }
+      ],
+      "skills": [
+        "REPLACE_INSTALLED_SKILL_NAME"
+      ],
+      "sandbox_config_id": "REPLACE_SANDBOX_CONFIG_UUID",
+      "allow_skill_scripts": true,
+      "nodes": [
+        {
+          "id": "REPLACE_MODEL_NODE_ID",
+          "kind": "model"
+        },
+        {
+          "id": "REPLACE_KNOWLEDGE_NODE_ID",
+          "kind": "knowledge"
+        },
+        {
+          "id": "REPLACE_MCP_NODE_ID",
+          "kind": "mcp"
+        },
+        {
+          "id": "REPLACE_SKILL_NODE_ID",
+          "kind": "skill"
+        }
+      ]
+    }
+  ]
+}

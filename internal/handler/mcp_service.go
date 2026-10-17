@@ -6,9 +6,12 @@ import (
 	stderrors "errors"
 	"net/http"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/Tencent/WeKnora/internal/agent/approval"
+	"github.com/Tencent/WeKnora/internal/agent/hitl"
+	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/handler/dto"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -25,7 +28,22 @@ type MCPServiceHandler struct {
 	mcpToolApprovalService interfaces.MCPToolApprovalService
 	toolApprovalGate       *approval.Gate
 	modelService           interfaces.ModelService
+	// agents resolves a shared agent so the @MCP picker can list the services
+	// that agent can actually reach, which live in ITS OWNER's workspace.
+	agents access.SharedAgentLookup
+	// runResumer continues a run suspended on an approval once it is
+	// answered. Nil leaves such answers to the reaper, which closes the run.
+	runResumer RunResumer
 }
+
+// RunResumer continues an agent run that ended suspended on prompt, now
+// answered by the request c. It must not block on the run.
+type RunResumer interface {
+	ResumeSuspendedRun(c *gin.Context, prompt *types.AgentPrompt, ownerGone bool, ownerLeaseUntil *time.Time)
+}
+
+// SetRunResumer wires the resumer of suspended runs.
+func (h *MCPServiceHandler) SetRunResumer(r RunResumer) { h.runResumer = r }
 
 // NewMCPServiceHandler creates a new MCP service handler
 func NewMCPServiceHandler(
@@ -33,12 +51,14 @@ func NewMCPServiceHandler(
 	mcpToolApprovalService interfaces.MCPToolApprovalService,
 	toolApprovalGate *approval.Gate,
 	modelService interfaces.ModelService,
+	agents access.SharedAgentLookup,
 ) *MCPServiceHandler {
 	return &MCPServiceHandler{
 		mcpServiceService:      mcpServiceService,
 		mcpToolApprovalService: mcpToolApprovalService,
 		toolApprovalGate:       toolApprovalGate,
 		modelService:           modelService,
+		agents:                 agents,
 	}
 }
 
@@ -67,7 +87,7 @@ func (h *MCPServiceHandler) mcpServiceResponses(
 // @Accept       json
 // @Produce      json
 // @Param        request  body      types.MCPService  true  "MCP服务配置"
-// @Success      200      {object}  map[string]interface{}  "创建的MCP服务"
+// @Success      200      {object}  handler.DataResponse{data=dto.MCPServiceResponse}  "创建的MCP服务"
 // @Failure      400      {object}  errors.AppError         "请求参数错误"
 // @Security     Bearer
 // @Security     ApiKeyAuth
@@ -75,7 +95,7 @@ func (h *MCPServiceHandler) mcpServiceResponses(
 func (h *MCPServiceHandler) CreateMCPService(c *gin.Context) {
 	ctx := c.Request.Context()
 
-	var service types.MCPService
+	service := types.MCPService{Enabled: true}
 	if err := c.ShouldBindJSON(&service); err != nil {
 		logger.Error(ctx, "Failed to parse MCP service request", err)
 		c.Error(errors.NewBadRequestError(err.Error()))
@@ -124,10 +144,15 @@ func (h *MCPServiceHandler) CreateMCPService(c *gin.Context) {
 // @Tags         MCP服务
 // @Accept       json
 // @Produce      json
-// @Success      200  {object}  map[string]interface{}  "MCP服务列表"
+// @Param        agent_id               query  string  false  "Agent ID; needs agent_source_tenant_id"
+// @Param        agent_source_tenant_id query  int     false  "Shared agent source workspace"
+// @Success      200  {object}  handler.DataResponse{data=[]dto.MCPServiceResponse}  "MCP服务列表"
 // @Failure      400  {object}  errors.AppError         "请求参数错误"
+// @Failure      403  {object}  errors.AppError         "无权使用该共享智能体"
 // @Security     Bearer
 // @Security     ApiKeyAuth
+// @x-agent      {"id":"mcp_service.list","risk":"read","max_items":200}
+// @x-agent-hint "Lists the workspace's MCP services by name, with whether each is enabled. Connection details and credentials are not shown; the user manages MCP services in the settings."
 // @Router       /mcp-services [get]
 func (h *MCPServiceHandler) ListMCPServices(c *gin.Context) {
 	ctx := c.Request.Context()
@@ -136,6 +161,20 @@ func (h *MCPServiceHandler) ListMCPServices(c *gin.Context) {
 	if tenantID == 0 {
 		logger.Error(ctx, "Tenant ID is empty")
 		c.Error(errors.NewBadRequestError("Workspace ID cannot be empty"))
+		return
+	}
+
+	// A shared agent reaches its OWNER's MCP services, so the picker has to
+	// list them there. Without this the picker showed the caller's own
+	// services, whose ids can never match the agent's preset — the backend
+	// dropped every such @mention with only a warning in the log.
+	agent, err := sharedAgentPickerScope(c, h.agents)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	if agent != nil {
+		h.listSharedAgentMCPServices(c, agent)
 		return
 	}
 
@@ -152,17 +191,60 @@ func (h *MCPServiceHandler) ListMCPServices(c *gin.Context) {
 	})
 }
 
+// listSharedAgentMCPServices serves the @MCP picker for a borrowed agent.
+//
+// The set is the agent's explicit preset resolved in its owner's workspace —
+// see sharedAgentMCPScope for why it is the preset and not the owner's whole
+// inventory. The response uses the narrowed cross-workspace shape, and the
+// tool-count summaries are read under the owner too, since that is where the
+// services and their saved directories live.
+func (h *MCPServiceHandler) listSharedAgentMCPServices(c *gin.Context, agent *types.CustomAgent) {
+	ctx := c.Request.Context()
+	ids := sharedAgentMCPScope(agent)
+	if len(ids) == 0 {
+		c.JSON(http.StatusOK, gin.H{"success": true, "data": []*dto.MCPServiceResponse{}})
+		return
+	}
+
+	services, err := h.mcpServiceService.ListMCPServicesByIDs(ctx, agent.TenantID, ids)
+	if err != nil {
+		logger.ErrorWithFields(ctx, err, map[string]interface{}{"tenant_id": agent.TenantID})
+		_ = c.Error(errors.NewInternalServerError("Failed to list MCP services: " + err.Error()))
+		return
+	}
+	enabled := make([]*types.MCPService, 0, len(services))
+	for _, svc := range services {
+		// Mirror registerMCPTools: a disabled service is not registered, so it
+		// must not be offered either.
+		if svc != nil && svc.Enabled {
+			enabled = append(enabled, svc)
+		}
+	}
+
+	resp := dto.NewSharedAgentMCPServiceResponses(enabled)
+	if summaries, err := h.mcpServiceService.ListMCPMetadataSummaries(
+		ctx, agent.TenantID, enabled,
+	); err != nil {
+		logger.ErrorWithFields(ctx, err, map[string]interface{}{"tenant_id": agent.TenantID})
+	} else {
+		dto.AttachMCPCatalogs(resp, enabled, summaries)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": resp})
+}
+
 // GetMCPService godoc
 // @Summary      获取MCP服务详情
 // @Description  根据ID获取MCP服务详情
 // @Tags         MCP服务
 // @Accept       json
 // @Produce      json
-// @Param        id   path      string  true  "MCP服务ID"
-// @Success      200  {object}  map[string]interface{}  "MCP服务详情"
+// @Param        id   path      string  true  "MCP服务ID"  extensions(x-agent=mcp_service_id)
+// @Success      200  {object}  handler.DataResponse{data=dto.MCPServiceResponse}  "MCP服务详情"
 // @Failure      404  {object}  errors.AppError         "服务不存在"
 // @Security     Bearer
 // @Security     ApiKeyAuth
+// @x-agent      {"id":"mcp_service.get","risk":"read"}
 // @Router       /mcp-services/{id} [get]
 func (h *MCPServiceHandler) GetMCPService(c *gin.Context) {
 	ctx := c.Request.Context()
@@ -199,7 +281,7 @@ func (h *MCPServiceHandler) GetMCPService(c *gin.Context) {
 // @Produce      json
 // @Param        id       path      string  true  "MCP服务ID"
 // @Param        request  body      object  true  "更新字段"
-// @Success      200      {object}  map[string]interface{}  "更新后的MCP服务"
+// @Success      200      {object}  handler.DataResponse{data=dto.MCPServiceResponse}  "更新后的MCP服务"
 // @Failure      400      {object}  errors.AppError         "请求参数错误"
 // @Security     Bearer
 // @Security     ApiKeyAuth
@@ -311,8 +393,8 @@ func (h *MCPServiceHandler) UpdateMCPService(c *gin.Context) {
 	}
 	if authConfig, ok := updateData["auth_config"].(map[string]interface{}); ok {
 		service.AuthConfig = &types.MCPAuthConfig{}
-		// Secret fields (api_key, token) are intentionally NOT read from the
-		// main PUT body — they live behind the /credentials subresource so
+		// Secret fields (api_key, token, client_secret) are intentionally NOT
+		// read from the main PUT body — they live behind the /credentials subresource so
 		// editing unrelated config (timeout, enabled, etc.) cannot
 		// accidentally clobber a stored credential. Log a warning when a
 		// client still tries to send them so we can spot stale callers.
@@ -362,6 +444,12 @@ func (h *MCPServiceHandler) UpdateMCPService(c *gin.Context) {
 		if metaURL, ok := authConfig["auth_server_metadata_url"].(string); ok {
 			service.AuthConfig.AuthServerMetadataURL = metaURL
 		}
+		// client_id is non-secret; present-and-empty returns the service to
+		// dynamic client registration. Its secret goes through /credentials.
+		if clientID, ok := authConfig["client_id"].(string); ok {
+			service.AuthConfig.ClientID = strings.TrimSpace(clientID)
+			updateFields["client_id"] = true
+		}
 	}
 	if advancedConfig, ok := updateData["advanced_config"].(map[string]interface{}); ok {
 		service.AdvancedConfig = &types.MCPAdvancedConfig{}
@@ -409,7 +497,7 @@ func (h *MCPServiceHandler) UpdateMCPService(c *gin.Context) {
 // @Accept       json
 // @Produce      json
 // @Param        id   path      string  true  "MCP服务ID"
-// @Success      200  {object}  map[string]interface{}  "删除成功"
+// @Success      200  {object}  handler.MessageResponse  "删除成功"
 // @Failure      500  {object}  errors.AppError         "服务器错误"
 // @Security     Bearer
 // @Security     ApiKeyAuth
@@ -445,7 +533,7 @@ func (h *MCPServiceHandler) DeleteMCPService(c *gin.Context) {
 // @Accept       json
 // @Produce      json
 // @Param        id   path      string  true  "MCP服务ID"
-// @Success      200  {object}  map[string]interface{}  "测试结果"
+// @Success      200  {object}  handler.DataResponse{data=types.MCPTestResult}  "测试结果"
 // @Failure      400  {object}  errors.AppError         "请求参数错误"
 // @Security     Bearer
 // @Security     ApiKeyAuth
@@ -490,7 +578,7 @@ func (h *MCPServiceHandler) TestMCPService(c *gin.Context) {
 // @Accept       json
 // @Produce      json
 // @Param        id   path      string  true  "MCP服务ID"
-// @Success      200  {object}  map[string]interface{}  "工具列表"
+// @Success      200  {object}  handler.DataResponse{data=[]types.MCPTool}  "工具列表"
 // @Failure      500  {object}  errors.AppError         "服务器错误"
 // @Security     Bearer
 // @Security     ApiKeyAuth
@@ -526,7 +614,7 @@ func (h *MCPServiceHandler) GetMCPServiceTools(c *gin.Context) {
 // @Accept       json
 // @Produce      json
 // @Param        id   path      string  true  "MCP服务ID"
-// @Success      200  {object}  map[string]interface{}  "资源列表"
+// @Success      200  {object}  handler.DataResponse{data=[]types.MCPResource}  "资源列表"
 // @Failure      500  {object}  errors.AppError         "服务器错误"
 // @Security     Bearer
 // @Security     ApiKeyAuth
@@ -600,7 +688,7 @@ type setMCPToolApprovalBody struct {
 // @Param        id         path      string                  true  "MCP 服务 ID"
 // @Param        tool_name  path      string                  true  "工具名"
 // @Param        request    body      map[string]interface{}  true  "{require_approval?: bool, enabled?: bool}"
-// @Success      200        {object}  map[string]interface{}  "更新结果"
+// @Success      200        {object}  handler.SuccessResponse  "更新结果"
 // @Failure      400        {object}  errors.AppError         "请求参数错误"
 // @Failure      404        {object}  errors.AppError         "MCP 服务或工具不存在"
 // @Security     Bearer
@@ -713,21 +801,103 @@ func (h *MCPServiceHandler) ResolveToolApproval(c *gin.Context) {
 		c.Error(errors.NewUnauthorizedError("authenticated user required to resolve tool approval"))
 		return
 	}
-	if err := h.toolApprovalGate.Resolve(tenantID, gateUserID, pendingID, dec); err != nil {
+	// The embed route carries session_id; binding it stops an embed visitor
+	// from resolving a prompt raised in another session.
+	res, err := h.toolApprovalGate.ResolveForResume(ctx, approval.ResolveRequest{
+		TenantID:  tenantID,
+		UserID:    gateUserID,
+		SessionID: c.Param("session_id"),
+		Kind:      types.AgentPromptKindToolApproval,
+		PendingID: pendingID,
+		Decision:  dec,
+	})
+	h.finishResolve(c, pendingID, res, err)
+}
+
+// finishResolve maps a resolve error to its HTTP status, or resumes the
+// run a suspended prompt belonged to and reports whether it did.
+func (h *MCPServiceHandler) finishResolve(c *gin.Context, pendingID string, res hitl.Resolution, err error) {
+	ctx := c.Request.Context()
+	if err != nil {
 		switch {
 		case stderrors.Is(err, approval.ErrPendingNotFound):
-			c.Error(errors.NewNotFoundError("pending approval not found or already completed"))
+			_ = c.Error(errors.NewNotFoundError("pending prompt not found or already completed"))
 		case stderrors.Is(err, approval.ErrAlreadyResolved):
-			c.Error(errors.NewBadRequestError("pending approval already resolved (timeout / cancel raced your action)"))
+			_ = c.Error(errors.NewBadRequestError(
+				"pending prompt already resolved (timeout / cancel raced your action)"))
 		case stderrors.Is(err, approval.ErrTenantMismatch):
-			c.Error(errors.NewBadRequestError("workspace mismatch"))
+			_ = c.Error(errors.NewBadRequestError("workspace mismatch"))
 		case stderrors.Is(err, approval.ErrUserMismatch):
-			c.Error(errors.NewBadRequestError("user mismatch: only the session owner may resolve this approval"))
+			_ = c.Error(errors.NewBadRequestError("user mismatch: only the session owner may answer this prompt"))
+		case stderrors.Is(err, approval.ErrInvalidDecision):
+			_ = c.Error(errors.NewBadRequestError(err.Error()))
 		default:
 			logger.ErrorWithFields(ctx, err, map[string]interface{}{"pending_id": pendingID})
-			c.Error(errors.NewInternalServerError(err.Error()))
+			_ = c.Error(errors.NewInternalServerError(err.Error()))
 		}
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true})
+	// A suspended run has ended; this replica now continues it.
+	resumed := res.Resume && h.runResumer != nil
+	if resumed {
+		h.runResumer.ResumeSuspendedRun(c, res.Prompt, res.OwnerGone, res.OwnerLeaseUntil)
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "resumed": resumed})
+}
+
+type resolveAgentPromptBody struct {
+	Kind     string          `json:"kind" binding:"required"`
+	Response json.RawMessage `json:"response" binding:"required"`
+}
+
+// ResolveAgentPrompt godoc
+// @Summary      回答 Agent 的交互请求
+// @Description  回答 Agent 运行中发起的交互（ask_user 提问或工具审批）。
+// @Description  kind 须与交互一致，response 为该类型的回答 JSON（不接受未知字段）：
+// @Description  ask_user 为 {selected?, values?, text?, declined?}；
+// @Description  tool_approval 为 {approved: bool, modified_args?: object, reason?: string}。
+// @Description  返回 resumed=true 表示运行已挂起并在本次回答后恢复，客户端需重新接入该消息的事件流
+// @Tags         Agent
+// @Accept       json
+// @Produce      json
+// @Param        prompt_id  path      string                  true  "交互 ID（事件中的 pending_id）"
+// @Param request body map[string]interface{} true "{kind: \"ask_user\"|\"tool_approval\", response: object}"
+// @Success      200        {object}  map[string]interface{}  "{success: true, resumed: bool}"
+// @Failure      400        {object}  errors.AppError         "回答不合法或交互已结束"
+// @Failure      404        {object}  errors.AppError         "交互不存在"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /agent/prompts/{prompt_id} [post]
+func (h *MCPServiceHandler) ResolveAgentPrompt(c *gin.Context) {
+	ctx := c.Request.Context()
+	promptID := c.Param("prompt_id")
+	tenantID := c.GetUint64(types.TenantIDContextKey.String())
+	if tenantID == 0 {
+		_ = c.Error(errors.NewBadRequestError("Workspace ID cannot be empty"))
+		return
+	}
+	if h.toolApprovalGate == nil {
+		_ = c.Error(errors.NewInternalServerError("Agent prompts are not configured"))
+		return
+	}
+	var body resolveAgentPromptBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		_ = c.Error(errors.NewBadRequestError(err.Error()))
+		return
+	}
+	principal, _ := types.PrincipalFromContext(ctx)
+	userID := principal.StorageID()
+	if strings.TrimSpace(userID) == "" {
+		_ = c.Error(errors.NewUnauthorizedError("authenticated user required to answer a prompt"))
+		return
+	}
+	res, err := h.toolApprovalGate.ResolveResponse(ctx, hitl.ResolveRequest{
+		TenantID:  tenantID,
+		UserID:    userID,
+		SessionID: c.Param("session_id"),
+		Kind:      body.Kind,
+		PromptID:  promptID,
+		Response:  body.Response,
+	})
+	h.finishResolve(c, promptID, res, err)
 }

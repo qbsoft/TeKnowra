@@ -1,8 +1,9 @@
 import { marked, type Renderer } from 'marked'
 import markedKatex from 'marked-katex-extension'
-import type { Tokens } from 'marked'
+import type { Tokens, Token } from 'marked'
 
 import type { CachedMermaidSvgHtml } from './mermaidStreaming.ts'
+import { ensureLiteralSingleTildeOnGlobalMarked } from './markedLiteralTilde.ts'
 import { normalizeSandboxArtifactRefs } from './sandboxArtifactRefs.ts'
 import {
   collapseStandaloneCitationParagraphs,
@@ -49,6 +50,7 @@ export type RenderChatMarkdownOptions = {
 export function configureMarkedForChatMarkdown(): void {
   if (markedConfigured) return
   marked.use({ breaks: true, gfm: true })
+  ensureLiteralSingleTildeOnGlobalMarked()
   marked.use(markedKatex({ throwOnError: false, nonStandard: true }))
   markedConfigured = true
 }
@@ -394,6 +396,7 @@ export function createChatMarkdownRenderer(options: ChatMarkdownRendererOptions 
   if (options.imageRenderer) {
     renderer.image = ({ href, title, text }: Tokens.Image) => {
       const imageHref = href || ''
+      if (!imageHref.trim()) return ''
       if (options.isValidImageUrl && !options.isValidImageUrl(imageHref)) {
         return options.invalidImageHtml?.(imageHref) ?? ''
       }
@@ -451,6 +454,42 @@ export function markStandaloneStrongParagraphs(html: string): string {
   )
 }
 
+/** Repair alignment syntax only when every data row confirms the header width. */
+export function repairUnambiguousTableSeparators(markdown: string): string {
+  const lines = markdown.split('\n')
+  let fence: { char: string; length: number } | undefined
+  const cells = (line: string): string[] | undefined => {
+    const value = line.trim()
+    if (!value.startsWith('|') || !value.endsWith('|') || /[\\`]/.test(value)) return undefined
+    return value.slice(1, -1).split('|').map(cell => cell.trim())
+  }
+  for (let i = 0; i < lines.length - 2; i++) {
+    const marker = lines[i].match(/^ {0,3}(`{3,}|~{3,})/)
+    if (marker) {
+      if (!fence) fence = { char: marker[1][0], length: marker[1].length }
+      else if (marker[1][0] === fence.char && marker[1].length >= fence.length
+        && /^ {0,3}(?:`{3,}|~{3,})\s*$/.test(lines[i])) fence = undefined
+      continue
+    }
+    if (fence || /^ {4}|^\t/.test(lines[i])) continue
+    const header = cells(lines[i])
+    const separator = cells(lines[i + 1])
+    if (!header || !separator || !separator.every(cell => /^:?-{3,}:?$/.test(cell))
+      || header.length === separator.length) continue
+    let rowCount = 0
+    let consistent = true
+    for (let j = i + 2; j < lines.length && lines[j].trim().startsWith('|'); j++) {
+      const row = cells(lines[j])
+      if (!row || row.length !== header.length) consistent = false
+      rowCount++
+    }
+    if (consistent && rowCount) {
+      lines[i + 1] = `| ${header.map((_, index) => separator[index] || '---').join(' | ')} |`
+    }
+  }
+  return lines.join('\n')
+}
+
 export function renderChatMarkdown(rawMarkdown: unknown, options: RenderChatMarkdownOptions): string {
   const rawText = typeof rawMarkdown === 'string' ? rawMarkdown : String(rawMarkdown || '')
   if (!rawText.trim()) return ''
@@ -485,17 +524,13 @@ export function renderChatMarkdown(rawMarkdown: unknown, options: RenderChatMark
   const preparedMarkdown = options.prepareMarkdown
     ? options.prepareMarkdown(balancedInline, options.cachedMermaidSvgHtml)
     : balancedInline
-  const flankingSafeMarkdown = repairFlankingEmphasis(preparedMarkdown)
+  const flankingSafeMarkdown = repairUnambiguousTableSeparators(repairFlankingEmphasis(preparedMarkdown))
   // Convert <kb>/<web>/wiki tags to HTML placeholders before escapeMarkdown so
   // agent sanitizers (e.g. UUID stripping) cannot damage chunk_id attributes.
   const { content: markdownWithPlaceholders, htmlSnippets } =
     extractCitationHtmlPlaceholders(flankingSafeMarkdown, options.knowledgeReferences)
   const escapedMarkdown = options.escapeMarkdown(markdownWithPlaceholders)
-  const html = marked.parse(markdownWithPlaceholders, {
-    renderer: options.renderer,
-    breaks: true,
-    async: false,
-  }) as string
+  const html = renderWithMethodologyNote(markdownWithPlaceholders, options.renderer)
   const restoredHtml = restoreCitationHtmlPlaceholders(html, htmlSnippets)
   const citationHtml = options.collapseStandaloneCitations === false
     ? restoredHtml
@@ -507,4 +542,35 @@ export function renderChatMarkdown(rawMarkdown: unknown, options: RenderChatMark
     ? options.injectCachedMermaidSvg(sanitized, options.cachedMermaidSvgHtml)
     : sanitized
   return options.streaming ? applyStreamingTailFade(withMermaid) : withMermaid
+}
+
+/** Recognize only explicit top-level methodology labels, never code/quotes. */
+function renderWithMethodologyNote(markdown: string, renderer: Renderer): string {
+  const tokens = marked.lexer(markdown)
+  const parse = (part: Token[]) => {
+    const list = Object.assign(part, { links: tokens.links })
+    return marked.parser(list, { ...marked.defaults, renderer, breaks: true, async: false }) as string
+  }
+  const result: string[] = []
+  let start = 0
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i]
+    if (token.type !== 'heading' && token.type !== 'paragraph') continue
+    const label = token.text.replace(/\*\*/g, '').trim()
+    if (!/^口径说明(?:\s*[:：]|\s*$)/.test(label)) continue
+    result.push(parse(tokens.slice(start, i)))
+    let end = i + 1
+    while (end < tokens.length && !['heading', 'hr'].includes(tokens[end].type)) end++
+    const inlineText = token.raw.replace(/^\s*#{1,6}\s*/, '')
+      .replace(/^\s*(?:\*\*)?口径说明(?:\*\*)?\s*[:：]?\s*(?:\*\*)?/, '').trim()
+    // Keep the original inline tokens so reference links, math and citations
+    // retain their resolved targets; only standalone section labels disappear.
+    const body = (inlineText ? parse([token]) : '')
+      + parse(tokens.slice(i + 1, end))
+    result.push(`<details class="methodology-note"><summary>口径说明 · 点击查看</summary><div class="methodology-note-body">${body}</div></details>`)
+    start = end
+    i = end - 1
+  }
+  result.push(parse(tokens.slice(start)))
+  return result.join('')
 }

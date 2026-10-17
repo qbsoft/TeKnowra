@@ -5,13 +5,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 
+	"github.com/Tencent/WeKnora/internal/agent"
+	"github.com/Tencent/WeKnora/internal/agent/einodef"
 	"github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/models/rerank"
 	"github.com/Tencent/WeKnora/internal/types"
+	secutils "github.com/Tencent/WeKnora/internal/utils"
 )
 
 // AgentQA performs agent-based question answering with conversation history and streaming support
@@ -130,15 +135,30 @@ func (s *sessionService) AgentQA(
 		// the agent. If a Wiki-only agent doesn't need reranking,
 		// agentRequiresRerankModel() below already lets it pass.
 		rerankModelID := req.CustomAgent.Config.RerankModelID
-		if rerankModelID == "" {
+		if rerankModelID == "" && types.UsesWorkspaceModelFallback(req.CustomAgent) {
+			// Nobody can set a rerank model on an internal agent, so it takes
+			// the workspace's; search_knowledge keeps retrieval order without one.
+			models, listErr := s.modelService.ListModels(ctx)
+			if listErr != nil {
+				logger.Warnf(ctx, "Failed to list models for internal agent %s rerank fallback: %v",
+					req.CustomAgent.ID, listErr)
+			}
+			rerankModelID = pickWorkspaceRerankModelID(models)
+			if rerankModelID == "" {
+				logger.Infof(ctx, "No rerank model in the workspace, internal agent %s searches without reranking",
+					req.CustomAgent.ID)
+			}
+		} else if rerankModelID == "" {
 			logger.Warnf(ctx, "No rerank model configured for custom agent %s, but knowledge_search tool is enabled", req.CustomAgent.ID)
 			return errors.New("rerank model is not configured: please set rerank_model_id on the agent")
 		}
 
-		rerankModel, err = s.modelService.GetRerankModel(ctx, rerankModelID)
-		if err != nil {
-			logger.Warnf(ctx, "Failed to get rerank model: %v", err)
-			return fmt.Errorf("failed to get rerank model: %w", err)
+		if rerankModelID != "" {
+			rerankModel, err = s.modelService.GetRerankModel(ctx, rerankModelID)
+			if err != nil {
+				logger.Warnf(ctx, "Failed to get rerank model: %v", err)
+				return fmt.Errorf("failed to get rerank model: %w", err)
+			}
 		}
 	} else {
 		logger.Infof(ctx, "knowledge_search is unavailable for the effective agent scope, skipping rerank model initialization")
@@ -148,19 +168,31 @@ func (s *sessionService) AgentQA(
 	// AgentSteps on each historical assistant message are expanded into proper
 	// assistant_with_tool_calls + tool messages so the model can see what was
 	// tried last turn — except final_answer, which is replayed as the trailing
-	// canonical assistant message.
+	// canonical assistant message. History is sized by the window, not by a
+	// turn count: compaction and its persisted checkpoints keep it in bounds.
 	var llmContext []chat.Message
 	if agentConfig.MultiTurnEnabled {
-		historyTurns := agentConfig.HistoryTurns
-		if historyTurns <= 0 {
-			historyTurns = 5
+		budget := agent.HistoryTokenBudget(agentConfig)
+		loadHistory := LoadAgentHistory
+		langflowHistory := false
+		if s.cfg != nil {
+			_, langflowHistory = s.cfg.LangflowBinding(agentConfig.AgentID)
 		}
-		llmContext, err = LoadAgentHistory(ctx, s.messageRepo, sessionID, historyTurns)
+		if langflowHistory {
+			loadHistory = LoadAgentTextHistory
+		}
+		llmContext, agentConfig.ContextTokenScale, err = loadHistory(
+			ctx, s.messageRepo, sessionID, budget, agentConfig.RetainRetrievalHistory,
+		)
 		if err != nil {
+			if langflowHistory {
+				return fmt.Errorf("Langflow会话历史加载失败，未启动任务：%w", err)
+			}
 			logger.Warnf(ctx, "Failed to load agent history from DB: %v, continuing without history", err)
 			llmContext = []chat.Message{}
 		}
-		logger.Infof(ctx, "Loaded %d history messages from DB (turns=%d)", len(llmContext), historyTurns)
+		logger.Infof(ctx, "Loaded %d history messages from DB (budget=%d tokens, token scale=%.2f)",
+			len(llmContext), budget, agentConfig.ContextTokenScale)
 	} else {
 		logger.Infof(ctx, "Multi-turn disabled for this agent, running without history")
 		llmContext = []chat.Message{}
@@ -169,9 +201,15 @@ func (s *sessionService) AgentQA(
 	// Hold the sandbox across this turn so an install that finishes while we
 	// are running cannot rebuild the VM between tool calls. Staging below is
 	// the first resolve: if the previous turn left a stale mark, that is
-	// where the new image is picked up.
-	releaseTurn := s.holdSandboxTurn(ctx, sessionID, agentConfig.SandboxConfigID)
-	defer releaseTurn()
+	// where the new image is picked up. HTTP send already holds the lease it
+	// took before persisting the turn, so only direct callers take one here.
+	if !req.TurnLeaseHeld {
+		releaseTurn, err := s.holdSandboxTurn(ctx, sessionID, agentConfig.SandboxConfigID)
+		if err != nil {
+			return err
+		}
+		defer releaseTurn()
+	}
 
 	// Reconcile all durable session attachments into the session's remote
 	// sandbox before the model can request shell or skill execution. The
@@ -190,18 +228,61 @@ func (s *sessionService) AgentQA(
 	if storeErr != nil {
 		return fmt.Errorf("resolve sandbox file store for session %s: %w", sessionID, storeErr)
 	}
-	if inputStore != nil {
-		sessionAttachments, loadErr := s.messageRepo.GetSessionAttachments(ctx, sessionID)
-		if loadErr != nil {
-			return fmt.Errorf("load session attachments for sandbox staging: %w", loadErr)
-		}
-		stagedAttachments, err = stager.stageSessionAttachments(ctx, sessionID, agentConfig.SandboxConfigID, req.Session.TenantID, sessionAttachments)
+	mgr, _, layoutErr := resolveSandboxForExecution(
+		ctx, s.sandboxResolver, s.sandboxMgr, s.sandboxPinner,
+		req.Session.TenantID, sessionID, agentConfig.SandboxConfigID, s.sandboxPolicy,
+		withLiteHostSandbox(s.hostSandbox), withLiteDesktop(s.hostDesktop),
+	)
+	layout := sessionWorkspaceLayout(
+		ctx, sessionID, mgr, layoutErr, s.hostSandbox, agentConfig.SandboxConfigID,
+	)
+	textProjectionOnly := false
+	if binding, enabled := s.cfg.LangflowBinding(agentConfig.AgentID); enabled {
+		textProjectionOnly = binding.AllowSessionAttachments || agentConfig.AllowSessionAttachments
+	}
+	if inputStore != nil && strings.TrimSpace(layout.InputDir) != "" {
+		stagedAttachments, err = stageAttachmentInventory(ctx, s.messageRepo, sessionID, textProjectionOnly, func(rows types.MessageAttachments) ([]stagedSessionAttachment, error) {
+			return stager.stageSessionAttachments(ctx, sessionID, agentConfig.SandboxConfigID, req.Session.TenantID, rows, layout)
+		})
 		if err != nil {
 			return fmt.Errorf("restore session attachments into sandbox: %w", err)
+		}
+		for _, staged := range stagedAttachments {
+			if staged.AttachmentPath == "" {
+				continue
+			}
+			if agentConfig.AttachmentSandboxCopies == nil {
+				agentConfig.AttachmentSandboxCopies = make(map[string]string, len(stagedAttachments))
+			}
+			agentConfig.AttachmentSandboxCopies[staged.Path] = staged.AttachmentPath
 		}
 	}
 
 	// Create agent engine with EventBus
+	if binding, enabled := s.cfg.LangflowBinding(agentConfig.AgentID); enabled {
+		if len(req.ImageURLs) > 0 || (len(req.Attachments) > 0 && (!binding.AllowSessionAttachments || !agentConfig.AllowSessionAttachments)) || req.ImageDescription != "" || req.QuotedContext != "" {
+			return fmt.Errorf("Langflow本阶段仅支持文本与已入库授权知识")
+		}
+		if len(binding.KnowledgeBases) > 0 {
+			if err := s.attachAuthorizedKnowledgeScope(ctx, agentConfig, agentTenantID, req.TagScopes); err != nil {
+				return err
+			}
+		}
+	}
+	if definition, useEino := s.cfg.EinoDefinitionForAgent(agentConfig); useEino {
+		d, published := einodef.Lookup(definition)
+		if !published {
+			return fmt.Errorf("Eino定义尚未发布")
+		}
+		if req.SharedAgentReadOnly || len(req.ImageURLs) > 0 || len(req.Attachments) > 0 || req.ImageDescription != "" || req.QuotedContext != "" {
+			return fmt.Errorf("%s当前仅支持本工作区文本问题和已入库授权文档", d.Name)
+		}
+		if d.Knowledge {
+			if err := s.attachEinoScope(ctx, agentConfig, agentTenantID, req.TagScopes); err != nil {
+				return err
+			}
+		}
+	}
 	logger.Info(ctx, "Creating agent engine")
 	engine, err := s.agentService.CreateAgentEngine(
 		ctx,
@@ -243,6 +324,22 @@ func (s *sessionService) AgentQA(
 		engine.SetSteerSink(req.SteerSink)
 	}
 
+	engine.SetInteractive(req.Interactive)
+	if req.Suspendable && s.cfg != nil && s.cfg.Agent.PromptSuspend() {
+		if request, err := json.Marshal(resumableAgentRequest(ctx, req)); err != nil {
+			logger.Warnf(ctx, "Run cannot be suspended, encoding its request failed: %v", err)
+		} else {
+			engine.EnableSuspension(request)
+		}
+	}
+
+	// A compaction that ends on a stored turn is written back onto it, so the
+	// next turn loads the summary instead of summarizing the same history
+	// again. Without multi-turn there is no stored history to end on.
+	if agentConfig.MultiTurnEnabled {
+		engine.SetContextCheckpointSink(messageCheckpointSink{repo: s.messageRepo, sessionID: sessionID})
+	}
+
 	agentQuery := req.Query
 	var agentImageURLs []string
 	if agentModelSupportsVision && len(req.ImageURLs) > 0 {
@@ -255,14 +352,13 @@ func (s *sessionService) AgentQA(
 	if req.QuotedContext != "" {
 		agentQuery += "\n\n" + req.QuotedContext
 	}
-	// Inject attachment content (documents, audio transcripts, etc.) so the agent
-	// can see uploaded files. Mirrors the behavior of the KnowledgeQA pipeline
-	// (see chat_pipeline/into_chat_message.go).
+	// Stored documents are listed for read_file rather than pasted in;
+	// inline uploads without a stored document still carry their content.
 	if len(req.Attachments) > 0 {
-		agentQuery += req.Attachments.BuildPrompt()
+		agentQuery += req.Attachments.BuildAgentPrompt()
 		logger.Infof(ctx, "Appended %d attachment(s) to agent query", len(req.Attachments))
 	}
-	if manifest := buildSandboxAttachmentsPrompt(stagedAttachments); manifest != "" {
+	if manifest := buildSandboxAttachmentsPrompt(stagedAttachments, layout); manifest != "" {
 		agentQuery += manifest
 		logger.Infof(ctx, "Appended %d staged sandbox attachment path(s) to agent query", len(stagedAttachments))
 	}
@@ -274,9 +370,58 @@ func (s *sessionService) AgentQA(
 	// Execute agent with streaming (asynchronously)
 	// Events will be emitted to EventBus and handled by the Handler layer
 	logger.Info(ctx, "Executing agent with streaming")
-	if _, err := engine.Execute(ctx, sessionID, req.AssistantMessageID, agentQuery, llmContext, agentImageURLs); err != nil {
+	var state *types.AgentState
+	if req.Resume != nil {
+		state, err = engine.Resume(ctx, sessionID, req.AssistantMessageID, llmContext,
+			req.Resume.Snapshot, req.Resume.Prompt)
+	} else {
+		state, err = engine.Execute(ctx, sessionID, req.AssistantMessageID, agentQuery, llmContext, agentImageURLs)
+	}
+	if err != nil {
 		logger.Errorf(ctx, "Agent execution failed: %v", err)
+		var extra map[string]interface{}
+		if metadata, isLangflow := engine.(interface{ RuntimeMetadata() map[string]any }); isLangflow {
+			extra = metadata.RuntimeMetadata()
+			if state != nil {
+				extra["agent_steps"] = state.RoundSteps
+			}
+		}
+		if definition, isEino := s.cfg.EinoDefinitionForAgent(agentConfig); isEino {
+			extra = map[string]interface{}{"definition_version": definition}
+			if state != nil {
+				extra["agent_steps"] = state.RoundSteps
+			}
+		}
 		// Emit error event to the EventBus used by this agent
+		if agentConfig.ExecutionEngine == "eino" || agentConfig.ExecutionEngine == "langflow" || extra != nil {
+			if extra == nil {
+				extra = map[string]interface{}{}
+			}
+			var ds []types.ExecutionDiagnostic
+			if state != nil {
+				ds = state.ExecutionDiagnostics
+			}
+			if len(ds) == 0 {
+				kind := types.ExecutionFailureCode(err)
+				if ctx.Err() != nil {
+					kind = types.ExecutionFailureCode(ctx.Err())
+				}
+				name := "langflow"
+				if _, isEino := s.cfg.EinoDefinitionForAgent(agentConfig); isEino {
+					name = "eino"
+				}
+				d := types.NewExecutionDiagnostic(name, "execution", kind, nil)
+				if state != nil && len(state.RoundSteps) > 0 {
+					last := state.RoundSteps[len(state.RoundSteps)-1]
+					d.Node = last.NodeKey
+					d.RunID = last.RunID
+					d.Definition = last.DefinitionVersion
+					d.Implementation = last.ImplementationVersion
+				}
+				ds = []types.ExecutionDiagnostic{d}
+			}
+			extra["execution_diagnostics"] = ds
+		}
 		eventBus.Emit(ctx, event.Event{
 			Type:      event.EventError,
 			SessionID: sessionID,
@@ -284,11 +429,38 @@ func (s *sessionService) AgentQA(
 				Error:     err.Error(),
 				Stage:     "agent_execution",
 				SessionID: sessionID,
+				Extra:     extra,
 			},
 		})
 	}
 	// Return empty - events will be handled by Handler via EventBus subscription
 	return nil
+}
+
+// resumableAgentRequest keeps the durable part of req needed to rebuild the
+// run elsewhere. Session, attachments and images are reloaded from storage.
+func resumableAgentRequest(ctx context.Context, req *types.QARequest) types.ResumableAgentRequest {
+	r := types.ResumableAgentRequest{
+		Query:               req.Query,
+		SummaryModelID:      req.SummaryModelID,
+		ReasoningEffort:     req.ReasoningEffort,
+		SharedAgentReadOnly: req.SharedAgentReadOnly,
+		KnowledgeBaseIDs:    req.KnowledgeBaseIDs,
+		KnowledgeIDs:        req.KnowledgeIDs,
+		TagScopes:           req.TagScopes,
+		MCPServiceIDs:       req.MCPServiceIDs,
+		SkillNames:          req.SkillNames,
+		WebSearchEnabled:    req.WebSearchEnabled,
+		QuestionOrigin:      req.QuestionOrigin,
+		PageContext:         req.PageContext,
+		AssistantAccess:     req.AssistantAccess,
+		UserMessageID:       req.UserMessageID,
+		Language:            types.LanguageFromContextOrDefault(ctx),
+	}
+	if req.CustomAgent != nil {
+		r.AgentID, r.AgentTenantID = req.CustomAgent.ID, req.CustomAgent.TenantID
+	}
+	return r
 }
 
 // buildAgentConfig creates a runtime AgentConfig from the QARequest's custom agent configuration,
@@ -301,25 +473,43 @@ func (s *sessionService) buildAgentConfig(
 ) (*types.AgentConfig, error) {
 	customAgent := req.CustomAgent
 	agentConfig := &types.AgentConfig{
-		MaxIterations:               customAgent.Config.MaxIterations,
-		Temperature:                 customAgent.Config.Temperature,
-		WebSearchEnabled:            customAgent.Config.WebSearchEnabled && req.WebSearchEnabled,
-		LocalBrowserEnabled:         req.LocalBrowserEnabled,
-		WebSearchMaxResults:         customAgent.Config.WebSearchMaxResults,
-		WebSearchProviderID:         customAgent.Config.WebSearchProviderID,
-		MultiTurnEnabled:            customAgent.Config.MultiTurnEnabled,
-		HistoryTurns:                customAgent.Config.HistoryTurns,
-		MemoryEnabled:               customAgent.Config.MemoryEnabled,
-		MCPSelectionMode:            customAgent.Config.MCPSelectionMode,
-		MCPServices:                 customAgent.Config.MCPServices,
-		MCPAuthWaitTimeout:          customAgent.Config.MCPAuthWaitTimeout,
-		Thinking:                    customAgent.Config.Thinking,
-		CitationEnabled:             customAgent.Config.CitationEnabled,
-		RetrieveKBOnlyWhenMentioned: customAgent.Config.RetrieveKBOnlyWhenMentioned,
-		LLMCallTimeout:              customAgent.Config.LLMCallTimeout,
-		MaxCompletionTokens:         customAgent.Config.MaxCompletionTokens,
-		RetainRetrievalHistory:      customAgent.Config.RetainRetrievalHistory,
-		SharedAgentReadOnly:         req.SharedAgentReadOnly,
+		MaxIterations:                 customAgent.Config.MaxIterations,
+		Temperature:                   customAgent.Config.Temperature,
+		WebSearchEnabled:              customAgent.Config.WebSearchEnabled && req.WebSearchEnabled,
+		LocalBrowserEnabled:           req.LocalBrowserEnabled,
+		WebSearchMaxResults:           customAgent.Config.WebSearchMaxResults,
+		WebSearchProviderID:           customAgent.Config.WebSearchProviderID,
+		MultiTurnEnabled:              customAgent.Config.MultiTurnEnabled,
+		MemoryEnabled:                 customAgent.Config.MemoryEnabled,
+		MCPSelectionMode:              customAgent.Config.MCPSelectionMode,
+		MCPServices:                   customAgent.Config.MCPServices,
+		MCPAuthWaitTimeout:            customAgent.Config.MCPAuthWaitTimeout,
+		AttachmentParseWaitTimeoutSec: customAgent.Config.AttachmentParseWaitTimeoutSec,
+		Thinking:                      customAgent.Config.Thinking,
+		ReasoningEffort:               customAgent.Config.ReasoningEffort,
+		CitationEnabled:               customAgent.Config.CitationEnabled,
+		RetrieveKBOnlyWhenMentioned:   customAgent.Config.RetrieveKBOnlyWhenMentioned,
+		LLMCallTimeout:                customAgent.Config.LLMCallTimeout,
+		MaxCompletionTokens:           customAgent.Config.MaxCompletionTokens,
+		RetainRetrievalHistory:        customAgent.Config.RetainRetrievalHistory,
+		SharedAgentReadOnly:           req.SharedAgentReadOnly,
+		ExecutionEngine:               customAgent.Config.ExecutionEngine,
+		EinoDefinition:                customAgent.Config.EinoDefinition,
+		AllowSessionAttachments:       customAgent.Config.AllowSessionAttachments,
+		// The model is always told it may call tools in parallel; without
+		// this the engine still ran them one by one, so three searches in
+		// one reply cost three sequential embed/retrieve/rerank rounds.
+		// Only read-only tools overlap (agenttools.CanRunConcurrently);
+		// anything else is a barrier that runs alone, in model order.
+		ParallelToolCalls: true,
+	}
+	applyRequestReasoningEffort(req.ReasoningEffort, &agentConfig.Thinking, &agentConfig.ReasoningEffort)
+	// An unset MCP mode means "all" at runtime, but the share scope and the
+	// agent UI both present it as none. A shared run must not hand receivers
+	// every MCP service (with the owner's credentials) that its owner believes
+	// is off.
+	if req.SharedAgentReadOnly && agentConfig.MCPSelectionMode == "" {
+		agentConfig.MCPSelectionMode = "none"
 	}
 
 	// Falls back to global configuration if no specific timeout is set for the agent.
@@ -336,10 +526,18 @@ func (s *sessionService) buildAgentConfig(
 	// because that is where resolveSandboxForExecution reads it; skillsForRun
 	// picks the config the same way the sandbox resolution does.
 	sandboxTenantID, _ := types.TenantIDFromContext(ctx)
-	skillConfigID, tenantSkills := skillsForRun(
-		ctx, s.sandboxPinner, s.sandboxConfigRepo, s.tenantSkillRepo,
-		sandboxTenantID, req.Session.ID, agentConfig.SandboxConfigID,
+	var (
+		skillConfigID string
+		tenantSkills  []*types.TenantSkillEntity
 	)
+	if s.hostDesktop {
+		skillConfigID, tenantSkills = hostSkillsForRun(ctx, s.tenantSkillRepo, s.hostSkillTree, sandboxTenantID)
+	} else {
+		skillConfigID, tenantSkills = skillsForRun(
+			ctx, s.sandboxPinner, s.sandboxConfigRepo, s.tenantSkillRepo,
+			sandboxTenantID, req.Session.ID, agentConfig.SandboxConfigID,
+		)
+	}
 	agentConfig.TenantSkills = tenantSkills
 	if len(tenantSkills) > 0 {
 		// The config named here is the one the skills came from, which is the
@@ -357,12 +555,8 @@ func (s *sessionService) buildAgentConfig(
 	agentConfig.KnowledgeBases = kbIDs
 	agentConfig.KnowledgeIDs = knowledgeIDs
 
-	// Use custom agent's allowed tools if specified, otherwise use defaults
-	if len(customAgent.Config.AllowedTools) > 0 {
-		agentConfig.AllowedTools = customAgent.Config.AllowedTools
-	} else {
-		agentConfig.AllowedTools = tools.DefaultAllowedTools()
-	}
+	// An unset list selects the default tools; an empty one means none.
+	agentConfig.AllowedTools = tools.EffectiveAllowedTools(customAgent.Config.AllowedTools)
 	// Apply per-turn @Skill / @MCP scope. Each helper narrows the agent's
 	// whitelist to the mentioned items and records the pinned set used for the
 	// <must_use> hint, keeping all scope logic in one place per resource type.
@@ -414,6 +608,24 @@ func (s *sessionService) buildAgentConfig(
 		return nil, fmt.Errorf("build search targets: %w", err)
 	}
 	agentConfig.SearchTargets = searchTargets
+	if !req.SharedAgentReadOnly {
+		roleEnforced := s.cfg != nil && s.cfg.Tenant.IsRBACEnforced()
+		agentConfig.WritableKBIDs = kbWritableIDs(ctx, s.kbShareService, searchTargets, roleEnforced)
+		if types.GrantsOperationCatalog(req.CustomAgent) {
+			agentConfig.OperationsAgentID = req.CustomAgent.ID
+			agentConfig.AssistantAccess = tenantInfo.AssistantConfig.EffectiveAccessLevel(req.AssistantAccess)
+			if cfg := tenantInfo.AssistantConfig; cfg != nil {
+				agentConfig.AssistantName = strings.TrimSpace(cfg.DisplayName)
+			}
+			if agentConfig.AssistantAccess == types.AssistantAccessReadOnly {
+				// Wiki tools write outside the catalog; read-only covers them too.
+				agentConfig.WritableKBIDs = nil
+			}
+		}
+	}
+	agentConfig.QuestionOrigin = questionOriginInTargets(ctx, req.QuestionOrigin, searchTargets)
+	agentConfig.PageContext = pageContextInTargets(ctx, req.PageContext, searchTargets)
+	agentConfig.ProductDocs = types.GrantsProductDocs(req.CustomAgent)
 	// Document tags are stored in knowledge_tag_relations, so document-KB tag
 	// scopes are resolved to concrete knowledge IDs before retrieval. Preserve
 	// those resolved IDs as this turn's pinned documents as well: otherwise the
@@ -649,4 +861,99 @@ func (s *sessionService) configureSkillsFromAgent(
 		agentConfig.SkillsEnabled = false
 		logger.Warnf(ctx, "Unknown SkillsSelectionMode=%s: skills disabled", customAgent.Config.SkillsSelectionMode)
 	}
+}
+
+// questionOriginInTargets keeps a suggested question's origin only when this
+// turn's search targets reach it, so the hint never points the model at
+// anything the tools cannot read. The base must be searched this turn (a whole
+// base, or a document/tag scope inside it); the document is kept only when a
+// target for that base covers it.
+func questionOriginInTargets(
+	ctx context.Context, origin *types.QuestionOrigin, targets types.SearchTargets,
+) *types.QuestionOrigin {
+	if origin == nil {
+		return nil
+	}
+	kbID := strings.TrimSpace(origin.KnowledgeBaseID)
+	if kbID == "" {
+		return nil
+	}
+	if !targets.ContainsKB(kbID) {
+		logger.Infof(ctx, "Ignoring question origin: knowledge base %s is outside this turn's search targets",
+			secutils.SanitizeForLog(kbID))
+		return nil
+	}
+	kept := &types.QuestionOrigin{KnowledgeBaseID: kbID}
+	if docID := strings.TrimSpace(origin.KnowledgeID); docID != "" && targetsCoverDocument(targets, kbID, docID) {
+		kept.KnowledgeID = docID
+	}
+	return kept
+}
+
+// pageContextInTargets keeps the page the user has open only when this turn's
+// search targets reach its knowledge base, and its document only when a
+// target covers it. The Wiki slug and issue IDs are kept as given (trimmed,
+// deduplicated and bounded); the agent service checks they exist in that base
+// before showing them to the model.
+func pageContextInTargets(
+	ctx context.Context, page *types.PageContext, targets types.SearchTargets,
+) *types.PageContext {
+	if page == nil {
+		return nil
+	}
+	kept := &types.PageContext{AgentID: strings.TrimSpace(page.AgentID)}
+	kbID := strings.TrimSpace(page.KnowledgeBaseID)
+	if kbID == "" || !targets.ContainsKB(kbID) {
+		if kbID != "" {
+			logger.Infof(ctx, "Ignoring page context: knowledge base %s is outside this turn's search targets",
+				secutils.SanitizeForLog(kbID))
+		}
+		if kept.AgentID == "" {
+			return nil
+		}
+		return kept
+	}
+	kept.KnowledgeBaseID = kbID
+	kept.WikiSlug = strings.TrimSpace(page.WikiSlug)
+	if docID := strings.TrimSpace(page.KnowledgeID); docID != "" && targetsCoverDocument(targets, kbID, docID) {
+		kept.KnowledgeID = docID
+	}
+	seen := make(map[string]struct{}, len(page.WikiIssueIDs))
+	for _, id := range page.WikiIssueIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		if len(kept.WikiIssueIDs) == types.MaxPageContextIssues {
+			break
+		}
+		seen[id] = struct{}{}
+		kept.WikiIssueIDs = append(kept.WikiIssueIDs, id)
+	}
+	return kept
+}
+
+// targetsCoverDocument reports whether a target for kbID can read docID: an
+// unfiltered whole-base target, or a document scope that lists it. A
+// tag-filtered base cannot be checked per document here, so it does not count.
+func targetsCoverDocument(targets types.SearchTargets, kbID, docID string) bool {
+	for _, t := range targets {
+		if t == nil || t.KnowledgeBaseID != kbID {
+			continue
+		}
+		switch t.Type {
+		case types.SearchTargetTypeKnowledgeBase:
+			if len(t.TagIDs) == 0 {
+				return true
+			}
+		case types.SearchTargetTypeKnowledge:
+			if slices.Contains(t.KnowledgeIDs, docID) {
+				return true
+			}
+		}
+	}
+	return false
 }

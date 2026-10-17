@@ -1,0 +1,21 @@
+{
+  "services": {
+    "frontend": {
+      "image": "sha256:e2db43ba58ba94f4e7f879118810a5b2aabf489f701c2fe33ef5cbfab7122167",
+      "environment": {
+        "APP_HOST": "app",
+        "APP_PORT": "8080",
+        "DEFAULT_LOCALE": "zh-CN"
+      },
+      "ports": [
+        "127.0.0.1:18173:80"
+      ],
+      "depends_on": {
+        "app": {
+          "condition": "service_healthy"
+        }
+      },
+      "restart": "unless-stopped"
+    }
+  }
+}

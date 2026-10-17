@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/common"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -18,9 +20,11 @@ var ErrLiveRunExists = errors.New("session already has a live run")
 
 // RedisStreamManager implements StreamManager using Redis Lists for append-only event streaming
 type RedisStreamManager struct {
-	client *redis.Client
-	ttl    time.Duration // TTL for stream data in Redis
-	prefix string        // Redis key prefix
+	client         *redis.Client
+	ttl            time.Duration // TTL for stream data in Redis
+	prefix         string        // Redis key prefix
+	ownerID        string        // instance identity; only compared in explicit single-instance mode
+	singleInstance bool
 }
 
 // NewRedisStreamManager creates a new Redis-based stream manager
@@ -50,9 +54,11 @@ func NewRedisStreamManager(redisAddr, redisUsername, redisPassword string,
 	}
 
 	return &RedisStreamManager{
-		client: client,
-		ttl:    ttl,
-		prefix: prefix,
+		client:         client,
+		ttl:            ttl,
+		prefix:         prefix,
+		ownerID:        uuid.NewString(),
+		singleInstance: os.Getenv("TEKNOWRA_SINGLE_INSTANCE") == "true",
 	}, nil
 }
 
@@ -98,6 +104,14 @@ func (r *RedisStreamManager) AppendEvent(
 	}
 	r.touchLiveRun(ctx, sessionID)
 
+	return nil
+}
+
+// ResetEvents deletes the message's event list.
+func (r *RedisStreamManager) ResetEvents(ctx context.Context, sessionID, messageID string) error {
+	if err := r.client.Del(ctx, r.buildKey(sessionID, messageID)).Err(); err != nil {
+		return fmt.Errorf("failed to reset stream events: %w", err)
+	}
 	return nil
 }
 
@@ -362,12 +376,14 @@ func (r *RedisStreamManager) buildLiveRunKey(sessionID string) string {
 
 // liveRunPayload is the stored shape of the live-run marker.
 type liveRunPayload struct {
+	OwnerID            string `json:"owner_id,omitempty"`
 	AssistantMessageID string `json:"assistant_message_id"`
 	RequestID          string `json:"request_id"`
 }
 
 func (r *RedisStreamManager) marshalLiveRun(assistantMessageID, requestID string) ([]byte, error) {
 	payload, err := json.Marshal(liveRunPayload{
+		OwnerID:            r.ownerID,
 		AssistantMessageID: assistantMessageID,
 		RequestID:          requestID,
 	})
@@ -447,9 +463,28 @@ func (r *RedisStreamManager) GetLiveRun(
 		// treat empty as new_run and would start a second AgentQA.
 		return "", "", fmt.Errorf("failed to decode live run marker: %w", err)
 	}
+	// Explicit single-instance deployment: a different nonempty owner can
+	// only be a previous process. Never renew its marker from browser polling.
+	// Legacy unowned markers and multi-instance deployments are left alone.
+	if r.singleInstance && payload.OwnerID != "" && payload.OwnerID != r.ownerID {
+		removed, err := removeDeadOwner.Run(ctx, r.client, []string{r.buildLiveRunKey(sessionID)}, raw).Int()
+		if err != nil {
+			return "", "", fmt.Errorf("failed to settle previous execution owner: %w", err)
+		}
+		if removed == 1 {
+			return "", "", nil
+		}
+		return "", "", fmt.Errorf("execution owner changed during lookup; retry")
+	}
 	r.touchLiveRun(ctx, sessionID)
 	return payload.AssistantMessageID, payload.RequestID, nil
 }
+
+var removeDeadOwner = redis.NewScript(`
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
+redis.call('DEL', KEYS[1])
+return 1
+`)
 
 // touchLiveRun extends the live-run marker so a turn longer than the
 // StreamManager TTL does not look idle. Expire on a missing key is a no-op.
@@ -492,6 +527,40 @@ func (r *RedisStreamManager) ClearLiveRun(
 	if err := clearLiveRunCAS.Run(ctx, r.client,
 		[]string{r.buildLiveRunKey(sessionID)}, needle).Err(); err != nil && err != redis.Nil {
 		return fmt.Errorf("failed to clear live run marker in Redis: %w", err)
+	}
+	return nil
+}
+
+// DropMessageStreams removes event and steer lists for deleted messages, and
+// clears a live-run marker that still names one of them.
+func (r *RedisStreamManager) DropMessageStreams(
+	ctx context.Context, sessionID string, messageIDs []string,
+) error {
+	if sessionID == "" || len(messageIDs) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(messageIDs)*2+1)
+	wantLive := make(map[string]struct{}, len(messageIDs))
+	for _, messageID := range messageIDs {
+		if messageID == "" {
+			continue
+		}
+		wantLive[messageID] = struct{}{}
+		keys = append(keys, r.buildKey(sessionID, messageID), r.buildSteerKey(sessionID, messageID))
+	}
+	if len(keys) > 0 {
+		if err := r.client.Del(ctx, keys...).Err(); err != nil {
+			return fmt.Errorf("failed to drop message streams in Redis: %w", err)
+		}
+	}
+	liveID, _, err := r.GetLiveRun(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	if _, ok := wantLive[liveID]; ok {
+		if err := r.ClearLiveRun(ctx, sessionID, liveID); err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/agent/approval"
+	"github.com/Tencent/WeKnora/internal/agent/runbudget"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/mcp"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -95,23 +96,33 @@ func getOrCreateMCPClientWithOAuthRetry(
 	gate approval.MCPApproval,
 	oauthSess *MCPOAuthSession,
 	mcpToolName, toolCallID string,
-) (mcp.MCPClient, error) {
+) (mcp.MCPClient, context.Context, context.CancelFunc, error) {
+	noop := func() {}
 	client, err := mcpManager.GetOrCreateClient(ctx, service)
 	if err == nil {
-		return client, nil
+		return client, ctx, noop, nil
 	}
 	if oauthSess == nil {
-		return nil, err
+		return nil, ctx, noop, err
 	}
 
 	retryCtx, cancel, ok := waitForMCPOAuthAuthorization(ctx, gate, oauthSess, service, mcpToolName, toolCallID, err)
 	if !ok {
-		return nil, err
+		return nil, ctx, noop, err
 	}
-	defer cancel()
 
-	_ = mcpManager.CloseClient(service.ID)
-	return mcpManager.GetOrCreateClient(retryCtx, service)
+	// The callback that completed the authorization may have been handled by
+	// another replica, so this one recycles its own connections: this user's,
+	// and any built with a replaced OAuth client registration. Other users'
+	// in-flight calls continue.
+	tenantID, _ := types.TenantIDFromContext(retryCtx)
+	_ = mcpManager.CloseClientsAfterAuthorization(
+		retryCtx, tenantID, service.ID, types.MCPOAuthPrincipalFromContext(retryCtx),
+	)
+	// The caller owns this context until CallTool/ListTools has finished.
+	// Canceling it here or returning only the client loses the renewed window.
+	client, err = mcpManager.GetOrCreateClient(retryCtx, service)
+	return client, retryCtx, cancel, err
 }
 
 func waitForMCPOAuthAuthorization(
@@ -157,8 +168,14 @@ func waitForMCPOAuthAuthorization(
 		return ctx, noop, false
 	}
 
+	resume, pauseErr := runbudget.Pause(waitCtx)
+	if pauseErr != nil {
+		return ctx, noop, false
+	}
 	decision, waitErr := ow.RequestOAuthAndWait(waitCtx, approval.OAuthPendingRequest{
-		TenantID:           tenantID,
+		// The user answers from their own workspace, which differs from
+		// tenantID (the agent's) when the agent is shared.
+		TenantID:           types.CallerFromContext(ctx).TenantID,
 		UserID:             userID,
 		SessionID:          sess.SessionID,
 		AssistantMessageID: sess.AssistantMessageID,
@@ -170,6 +187,7 @@ func waitForMCPOAuthAuthorization(
 		ToolCallID:         toolCallID,
 		WaitTimeout:        oauthWaitTimeout(sess),
 	})
+	resume()
 	if waitErr != nil || !decision.Approved {
 		return ctx, noop, false
 	}
@@ -225,6 +243,9 @@ func emitMCPOAuthRequiredNotice(
 // oauthAwareConnectError turns a low-level MCP connect/call error into a
 // message the agent (and ultimately the user) can act on.
 func oauthAwareConnectError(service *types.MCPService, err error) string {
+	if errors.Is(err, mcp.ErrToolCallOutcomeUnknown) {
+		return fmt.Sprintf("MCP tool call failed: %v", err)
+	}
 	if service.AuthConfig.IsOAuth() && isAuthorizationRequired(err) {
 		return fmt.Sprintf(
 			"MCP service %q requires OAuth authorization. Please open the service settings "+

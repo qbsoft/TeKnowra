@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"github.com/Tencent/WeKnora/internal/agent/langflowdef"
+	"github.com/Tencent/WeKnora/internal/agent/langflowrelease"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -10,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/utils"
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
@@ -17,22 +20,25 @@ import (
 
 // Config 应用程序总配置
 type Config struct {
-	Conversation    *ConversationConfig    `yaml:"conversation"     json:"conversation"`
-	Server          *ServerConfig          `yaml:"server"           json:"server"`
-	KnowledgeBase   *KnowledgeBaseConfig   `yaml:"knowledge_base"   json:"knowledge_base"`
-	Tenant          *TenantConfig          `yaml:"tenant"           json:"tenant"`
-	Auth            *AuthConfig            `yaml:"auth"             json:"auth"`
-	Audit           *AuditConfig           `yaml:"audit"            json:"audit"`
-	OIDCAuth        *OIDCAuthConfig        `yaml:"oidc_auth"        json:"oidc_auth"`
-	Models          []ModelConfig          `yaml:"models"           json:"models"`
-	VectorDatabase  *VectorDatabaseConfig  `yaml:"vector_database"  json:"vector_database"`
-	DocReader       *DocReaderConfig       `yaml:"docreader"        json:"docreader"`
-	StreamManager   *StreamManagerConfig   `yaml:"stream_manager"   json:"stream_manager"`
-	ExtractManager  *ExtractManagerConfig  `yaml:"extract"          json:"extract"`
-	WebSearch       *WebSearchConfig       `yaml:"web_search"       json:"web_search"`
-	PromptTemplates *PromptTemplatesConfig `yaml:"prompt_templates" json:"prompt_templates"`
-	IM              *IMConfig              `yaml:"im"               json:"im"`
-	Agent           *AgentConfig           `yaml:"agent"            json:"agent"`
+	einoDefinitions  map[string]string
+	langflowBindings map[string]langflowdef.Binding
+	langflowReleases *langflowrelease.Store
+	Conversation     *ConversationConfig    `yaml:"conversation"     json:"conversation"`
+	Server           *ServerConfig          `yaml:"server"           json:"server"`
+	KnowledgeBase    *KnowledgeBaseConfig   `yaml:"knowledge_base"   json:"knowledge_base"`
+	Tenant           *TenantConfig          `yaml:"tenant"           json:"tenant"`
+	Auth             *AuthConfig            `yaml:"auth"             json:"auth"`
+	Audit            *AuditConfig           `yaml:"audit"            json:"audit"`
+	OIDCAuth         *OIDCAuthConfig        `yaml:"oidc_auth"        json:"oidc_auth"`
+	Models           []ModelConfig          `yaml:"models"           json:"models"`
+	VectorDatabase   *VectorDatabaseConfig  `yaml:"vector_database"  json:"vector_database"`
+	DocReader        *DocReaderConfig       `yaml:"docreader"        json:"docreader"`
+	StreamManager    *StreamManagerConfig   `yaml:"stream_manager"   json:"stream_manager"`
+	ExtractManager   *ExtractManagerConfig  `yaml:"extract"          json:"extract"`
+	WebSearch        *WebSearchConfig       `yaml:"web_search"       json:"web_search"`
+	PromptTemplates  *PromptTemplatesConfig `yaml:"prompt_templates" json:"prompt_templates"`
+	IM               *IMConfig              `yaml:"im"               json:"im"`
+	Agent            *AgentConfig           `yaml:"agent"            json:"agent"`
 	// FrontendBaseURL is the externally-visible origin of the SPA, used
 	// to compose absolute share-link URLs. Empty falls back to a host-
 	// relative URL ("/register?token=…") which the SPA then resolves
@@ -49,6 +55,48 @@ type AgentConfig struct {
 	// ToolApprovalTimeoutSeconds is how long the agent waits for human approval on a flagged MCP tool.
 	// 0 means default 600 (10 minutes).
 	ToolApprovalTimeoutSeconds int `yaml:"tool_approval_timeout_seconds" json:"tool_approval_timeout_seconds"`
+	// PromptSuspendEnabled lets a run that waits on a suspendable prompt (tool
+	// approval) end after PromptHotWaitSeconds and persist its state instead of
+	// blocking up to ToolApprovalTimeoutSeconds. Unset means enabled.
+	PromptSuspendEnabled *bool `yaml:"prompt_suspend_enabled" json:"prompt_suspend_enabled"`
+	// PromptHotWaitSeconds is how long a suspendable prompt waits in memory
+	// before the run is suspended. 0 means default 120.
+	PromptHotWaitSeconds int `yaml:"prompt_hot_wait_seconds" json:"prompt_hot_wait_seconds"`
+	// PromptExpireSeconds is how long a suspended prompt stays answerable.
+	// 0 means default 604800 (7 days); a negative value never expires.
+	PromptExpireSeconds int `yaml:"prompt_expire_seconds" json:"prompt_expire_seconds"`
+}
+
+// Defaults for suspendable agent prompts.
+const (
+	DefaultPromptHotWait = 120 * time.Second
+	DefaultPromptExpire  = 7 * 24 * time.Hour
+)
+
+// PromptSuspend reports whether suspendable prompts may suspend their run.
+func (c *AgentConfig) PromptSuspend() bool {
+	return c == nil || c.PromptSuspendEnabled == nil || *c.PromptSuspendEnabled
+}
+
+// PromptHotWait returns the in-memory wait before a run is suspended.
+func (c *AgentConfig) PromptHotWait() time.Duration {
+	if c == nil || c.PromptHotWaitSeconds <= 0 {
+		return DefaultPromptHotWait
+	}
+	return time.Duration(c.PromptHotWaitSeconds) * time.Second
+}
+
+// PromptExpiry returns how long a suspended prompt stays answerable; zero
+// means it never expires.
+func (c *AgentConfig) PromptExpiry() time.Duration {
+	switch {
+	case c == nil || c.PromptExpireSeconds == 0:
+		return DefaultPromptExpire
+	case c.PromptExpireSeconds < 0:
+		return 0
+	default:
+		return time.Duration(c.PromptExpireSeconds) * time.Second
+	}
 }
 
 // IMConfig configures the IM integration service.
@@ -114,6 +162,9 @@ type ConversationConfig struct {
 	ExtractRelationshipsPromptID string `yaml:"extract_relationships_prompt_id"   json:"extract_relationships_prompt_id"`
 	GenerateQuestionsPromptID    string `yaml:"generate_questions_prompt_id"      json:"generate_questions_prompt_id"`
 
+	// GenerateKBDescriptionPromptID selects the knowledge-base description template.
+	GenerateKBDescriptionPromptID string `yaml:"generate_kb_description_prompt_id" json:"generate_kb_description_prompt_id"` //nolint:lll // one-line struct tag
+
 	// Resolved prompt text fields (populated by backfill, not from YAML)
 	FallbackPrompt             string `yaml:"-" json:"fallback_prompt"`
 	RewritePromptSystem        string `yaml:"-" json:"rewrite_prompt_system"`
@@ -123,6 +174,9 @@ type ConversationConfig struct {
 	ExtractEntitiesPrompt      string `yaml:"-" json:"extract_entities_prompt"`
 	ExtractRelationshipsPrompt string `yaml:"-" json:"extract_relationships_prompt"`
 	GenerateQuestionsPrompt    string `yaml:"-" json:"generate_questions_prompt"`
+
+	// GenerateKBDescriptionPrompt is the resolved knowledge-base description template text.
+	GenerateKBDescriptionPrompt string `yaml:"-" json:"generate_kb_description_prompt"`
 
 	// IntentSystemPrompts maps intent values (e.g. "greeting", "chitchat") to
 	// system prompt text. Populated by backfill from IntentPrompts templates.
@@ -267,13 +321,14 @@ type AuditConfig struct {
 
 // AuthConfig governs the user authentication entry points.
 type AuthConfig struct {
-	// RegistrationMode controls who may call POST /auth/register.
+	// RegistrationMode controls public and invitation password registration.
 	//   "self_serve" (default) — anyone may register; a new tenant is
 	//                            auto-created and the registrant becomes
 	//                            its Owner. Preserves existing behaviour.
-	//   "invite_only"          — public registration is rejected; new
-	//                            users only enter through the invitation
-	//                            flow added in PR 3.
+	//   "invite_register"      — new users need a valid invitation link.
+	//   "invite_only"          — no password registration; invitations can
+	//                            only be accepted by existing accounts.
+	//                            Kept as the legacy disabled mode.
 	RegistrationMode string `yaml:"registration_mode" json:"registration_mode"`
 	// DefaultTenantMode controls public password-registration provisioning.
 	// create_personal preserves the historical one-user-one-workspace default;
@@ -287,14 +342,13 @@ type AuthConfig struct {
 const (
 	AuthRegistrationModeSelfServe       = "self_serve"
 	AuthRegistrationModeInviteOnly      = "invite_only"
+	AuthRegistrationModeInviteRegister  = "invite_register"
 	AuthDefaultTenantModeCreatePersonal = "create_personal"
 	AuthDefaultTenantModeTenantless     = "tenantless"
 )
 
-// IsInviteOnly returns true when registration is gated behind invitations.
-// Treats nil receiver and empty/unknown values as "not invite-only" so the
-// default keeps current behaviour even if the section is missing from the
-// config file.
+// IsInviteOnly identifies the legacy disabled-registration mode.
+// It does not identify the invite_register mode, which permits new accounts.
 func (c *AuthConfig) IsInviteOnly() bool {
 	if c == nil {
 		return false
@@ -361,10 +415,12 @@ type PromptTemplatesConfig struct {
 
 	GenerateSessionTitle []PromptTemplate `yaml:"generate_session_title" json:"generate_session_title,omitempty"`
 	GenerateSummary      []PromptTemplate `yaml:"generate_summary"       json:"generate_summary,omitempty"`
-	KeywordsExtraction   []PromptTemplate `yaml:"keywords_extraction"    json:"keywords_extraction,omitempty"`
-	AgentSystemPrompt    []PromptTemplate `yaml:"agent_system_prompt"    json:"agent_system_prompt,omitempty"`
-	GraphExtraction      []PromptTemplate `yaml:"graph_extraction"       json:"graph_extraction,omitempty"`
-	GenerateQuestions    []PromptTemplate `yaml:"generate_questions"     json:"generate_questions,omitempty"`
+	// GenerateKBDescription writes the knowledge-base gist from the document profile aggregate.
+	GenerateKBDescription []PromptTemplate `yaml:"generate_kb_description" json:"generate_kb_description,omitempty"` //nolint:lll // one-line struct tag
+	KeywordsExtraction    []PromptTemplate `yaml:"keywords_extraction"    json:"keywords_extraction,omitempty"`
+	AgentSystemPrompt     []PromptTemplate `yaml:"agent_system_prompt"    json:"agent_system_prompt,omitempty"`
+	GraphExtraction       []PromptTemplate `yaml:"graph_extraction"       json:"graph_extraction,omitempty"`
+	GenerateQuestions     []PromptTemplate `yaml:"generate_questions"     json:"generate_questions,omitempty"`
 	// IntentPrompts holds per-intent system prompt overrides (template ID = intent value).
 	IntentPrompts []PromptTemplate `yaml:"intent_prompts" json:"intent_prompts,omitempty"`
 }
@@ -537,6 +593,12 @@ func LoadConfig() (*Config, error) {
 		return nil, fmt.Errorf("unable to decode config into struct: %w", err)
 	}
 	fmt.Printf("Using configuration file: %s\n", viper.ConfigFileUsed())
+	if err := cfg.loadEinoDefinitions(os.Getenv("TEKNOWRA_EINO_AGENTS")); err != nil {
+		return nil, err
+	}
+	if err := cfg.loadLangflowFile(); err != nil {
+		return nil, err
+	}
 
 	// 加载提示词模板（从目录或配置文件）
 	configDir := filepath.Dir(viper.ConfigFileUsed())
@@ -582,6 +644,7 @@ func LoadConfig() (*Config, error) {
 	applyOIDCEnvOverrides(&cfg)
 	applyAgentEnvOverrides(&cfg)
 	applyKnowledgeBaseEnvOverrides(&cfg)
+	applyNetworkEnvOverrides()
 	applyAuthAndTenantDefaults(&cfg)
 	applyAuditDefaults(&cfg)
 
@@ -630,9 +693,11 @@ func ValidateConfig(cfg *Config) error {
 
 	if cfg.Auth != nil {
 		mode := strings.TrimSpace(cfg.Auth.RegistrationMode)
-		if mode != "" && mode != AuthRegistrationModeSelfServe && mode != AuthRegistrationModeInviteOnly {
-			errs = append(errs, fmt.Sprintf("auth.registration_mode must be %q or %q, got %q",
-				AuthRegistrationModeSelfServe, AuthRegistrationModeInviteOnly, mode))
+		if mode != "" && mode != AuthRegistrationModeSelfServe &&
+			mode != AuthRegistrationModeInviteOnly && mode != AuthRegistrationModeInviteRegister {
+			errs = append(errs, fmt.Sprintf("auth.registration_mode must be %q, %q or %q, got %q",
+				AuthRegistrationModeSelfServe, AuthRegistrationModeInviteOnly,
+				AuthRegistrationModeInviteRegister, mode))
 		}
 
 		tenantMode := strings.TrimSpace(cfg.Auth.DefaultTenantMode)
@@ -773,6 +838,21 @@ func applyKnowledgeBaseEnvOverrides(cfg *Config) {
 	}
 }
 
+// applyNetworkEnvOverrides configures global network timeouts that are not
+// scoped to a single config section. The outbound (SSRF-safe) dial timeout
+// governs how quickly an unreachable model/connector endpoint fails; it
+// defaults to 5s and can be raised via WEKNORA_OUTBOUND_DIAL_TIMEOUT for
+// slow-to-connect serverless endpoints.
+func applyNetworkEnvOverrides() {
+	dialTimeout := 5 * time.Second
+	if value := strings.TrimSpace(os.Getenv("WEKNORA_OUTBOUND_DIAL_TIMEOUT")); value != "" {
+		if d, err := time.ParseDuration(value); err == nil && d > 0 {
+			dialTimeout = d
+		}
+	}
+	utils.SetOutboundDialTimeout(dialTimeout)
+}
+
 func applyAgentEnvOverrides(cfg *Config) {
 	if cfg.Agent == nil {
 		cfg.Agent = &AgentConfig{}
@@ -793,6 +873,10 @@ func applyAgentEnvOverrides(cfg *Config) {
 		} else if d, err := time.ParseDuration(value + "s"); err == nil {
 			cfg.Agent.ToolApprovalTimeoutSeconds = int(d.Seconds())
 		}
+	}
+	if value := strings.TrimSpace(os.Getenv("WEKNORA_AGENT_PROMPT_SUSPEND")); value != "" {
+		enabled := strings.EqualFold(value, "true")
+		cfg.Agent.PromptSuspendEnabled = &enabled
 	}
 }
 
@@ -980,6 +1064,13 @@ func backfillConversationDefaults(cfg *Config) {
 			fmt.Printf("Warning: generate_summary_prompt_id %q not found\n", conv.GenerateSummaryPromptID)
 		}
 	}
+	if conv.GenerateKBDescriptionPromptID != "" {
+		if t := FindTemplateByID(pt, conv.GenerateKBDescriptionPromptID); t != nil {
+			conv.GenerateKBDescriptionPrompt = t.Content
+		} else {
+			fmt.Printf("Warning: generate_kb_description_prompt_id %q not found\n", conv.GenerateKBDescriptionPromptID)
+		}
+	}
 	if conv.ExtractEntitiesPromptID != "" {
 		if t := FindTemplateByID(pt, conv.ExtractEntitiesPromptID); t != nil {
 			conv.ExtractEntitiesPrompt = t.Content
@@ -1044,6 +1135,7 @@ func FindTemplateByID(pt *PromptTemplatesConfig, id string) *PromptTemplate {
 		pt.Fallback,
 		pt.GenerateSessionTitle,
 		pt.GenerateSummary,
+		pt.GenerateKBDescription,
 		pt.KeywordsExtraction,
 		pt.AgentSystemPrompt,
 		pt.GraphExtraction,
@@ -1089,17 +1181,18 @@ func loadPromptTemplates(configDir string) (*PromptTemplatesConfig, error) {
 
 	// 定义模板文件映射
 	templateFiles := map[string]*[]PromptTemplate{
-		"system_prompt.yaml":          &config.SystemPrompt,
-		"context_template.yaml":       &config.ContextTemplate,
-		"rewrite.yaml":                &config.Rewrite,
-		"fallback.yaml":               &config.Fallback,
-		"generate_session_title.yaml": &config.GenerateSessionTitle,
-		"generate_summary.yaml":       &config.GenerateSummary,
-		"keywords_extraction.yaml":    &config.KeywordsExtraction,
-		"agent_system_prompt.yaml":    &config.AgentSystemPrompt,
-		"graph_extraction.yaml":       &config.GraphExtraction,
-		"generate_questions.yaml":     &config.GenerateQuestions,
-		"intent_prompts.yaml":         &config.IntentPrompts,
+		"system_prompt.yaml":           &config.SystemPrompt,
+		"context_template.yaml":        &config.ContextTemplate,
+		"rewrite.yaml":                 &config.Rewrite,
+		"fallback.yaml":                &config.Fallback,
+		"generate_session_title.yaml":  &config.GenerateSessionTitle,
+		"generate_summary.yaml":        &config.GenerateSummary,
+		"generate_kb_description.yaml": &config.GenerateKBDescription,
+		"keywords_extraction.yaml":     &config.KeywordsExtraction,
+		"agent_system_prompt.yaml":     &config.AgentSystemPrompt,
+		"graph_extraction.yaml":        &config.GraphExtraction,
+		"generate_questions.yaml":      &config.GenerateQuestions,
+		"intent_prompts.yaml":          &config.IntentPrompts,
 	}
 
 	// 加载每个模板文件

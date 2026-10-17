@@ -1,0 +1,8 @@
+{
+  "APP_ENV_FILE": "/etc/teknowra/platform.env",
+  "LANGFLOW_ENV_FILE": "/etc/teknowra/langflow.env",
+  "BINDINGS_DIR": "/srv/teknowra/bindings",
+  "SERVICE_CREDENTIALS_DIR": "/srv/teknowra/credentials",
+  "APP_RELEASE_STATE_DIR": "/srv/teknowra/platform-state",
+  "LANGFLOW_STATE_DIR": "/srv/teknowra/langflow-state"
+}

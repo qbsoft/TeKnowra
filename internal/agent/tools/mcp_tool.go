@@ -1,15 +1,18 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/agent/approval"
+	"github.com/Tencent/WeKnora/internal/agent/runbudget"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/mcp"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -33,6 +36,18 @@ type MCPTool struct {
 	schemaErr              error
 	registeredName         string
 	serverInstructions     string
+	callAuthorizer         func(context.Context) error
+	pinnedArguments        json.RawMessage
+}
+
+// SetCallAuthorizer lets the host revalidate its immutable capability before
+// each actual CallTool, including after OAuth waiting or transport retry.
+func (t *MCPTool) SetCallAuthorizer(check func(context.Context) error) { t.callAuthorizer = check }
+
+// PinArguments is opt-in for host-generated calls with a confirmed binding.
+// Human approval may reject the call, but cannot silently change that binding.
+func (t *MCPTool) PinArguments(args json.RawMessage) {
+	t.pinnedArguments = append(json.RawMessage(nil), args...)
 }
 
 // NewMCPTool creates a new MCP tool wrapper. authWaitTimeoutSeconds carries the
@@ -140,6 +155,8 @@ func (t *MCPTool) callToolTimeout(engineTimeout time.Duration) time.Duration {
 // Execute executes the MCP tool
 func (t *MCPTool) Execute(ctx context.Context, args json.RawMessage) (*types.ToolResult, error) {
 	logger.GetLogger(ctx).Infof("Executing MCP tool: %s from service: %s", t.mcpTool.Name, t.service.Name)
+	// Preserve host metadata even if an approval wait replaces the timeout context.
+	conversationMeta, _ := ToolExecFromContext(ctx)
 
 	// Re-check the policy at call time as well as during registration. An agent
 	// engine may outlive a settings change, and a disabled tool must not remain
@@ -165,11 +182,21 @@ func (t *MCPTool) Execute(ctx context.Context, args json.RawMessage) (*types.Too
 		}, err
 	}
 
+	// The post-approval ctx is derived from ApprovalCtx, which does not carry
+	// the exec metadata; read it once here so the OAuth prompt still works
+	// for tools that require approval.
+	execMeta, _ := ToolExecFromContext(ctx)
+	callWindowDerived := false
+
 	// Human approval gate for dangerous tools (issue #1173)
 	if t.gate != nil {
-		if meta, ok := ToolExecFromContext(ctx); ok && meta != nil && meta.EventBus != nil {
+		if meta := execMeta; meta != nil && meta.EventBus != nil {
 			tenantID, _ := types.TenantIDFromContext(ctx)
-			if t.gate.NeedsApproval(ctx, tenantID, t.service.ID, t.mcpTool.Name) {
+			// A resumed call already holds the user's decision. It is honored
+			// even if the tool stopped requiring approval meanwhile, since the
+			// user may have edited the arguments.
+			resumed := meta.Answered != nil && meta.Answered.Kind == types.AgentPromptKindToolApproval
+			if resumed || t.gate.NeedsApproval(ctx, tenantID, t.service.ID, t.mcpTool.Name) {
 				// Use ApprovalCtx (round-level ctx WITHOUT defaultToolExecTimeout) so
 				// human approval can legitimately wait longer than the per-tool 60s.
 				// User-stop / request cancel still propagates because ApprovalCtx is a
@@ -178,25 +205,57 @@ func (t *MCPTool) Execute(ctx context.Context, args json.RawMessage) (*types.Too
 				if meta.ApprovalCtx != nil {
 					waitCtx = meta.ApprovalCtx
 				}
-				decision, waitErr := t.gate.RequestAndWait(waitCtx, approval.PendingRequest{
-					TenantID:           tenantID,
-					UserID:             meta.UserID,
-					SessionID:          meta.SessionID,
-					AssistantMessageID: meta.AssistantMessageID,
-					RequestID:          meta.RequestID,
-					EventBus:           meta.EventBus,
-					ServiceID:          t.service.ID,
-					ServiceName:        t.service.Name,
-					MCPToolName:        t.mcpTool.Name,
-					RegisteredToolName: t.Name(),
-					Description:        t.mcpTool.Description,
-					Args:               args,
-					ToolCallID:         meta.ToolCallID,
-				})
+				resume, pauseErr := runbudget.PauseApproval(waitCtx)
+				if pauseErr != nil {
+					return &types.ToolResult{Success: false, Error: "任务等待预算不可用"}, nil
+				}
+				var decision approval.Decision
+				var waitErr error
+				if resumed {
+					decision = t.gate.ResumeDecision(waitCtx, meta.Answered, meta.EventBus)
+				} else {
+					var snapshot []byte
+					var snapshotVersion int
+					if meta.Snapshot != nil {
+						var snapErr error
+						if snapshot, snapshotVersion, snapErr = meta.Snapshot(); snapErr != nil {
+							// Without run state the approval can still block in memory.
+							logger.Warnf(ctx, "[Tool][MCPTool] capture run state for approval: %v", snapErr)
+							snapshot = nil
+						}
+					}
+					decision, waitErr = t.gate.RequestAndWait(waitCtx, approval.PendingRequest{
+						Snapshot:        snapshot,
+						SnapshotVersion: snapshotVersion,
+						// The user answers from their own workspace, which differs
+						// from tenantID (the agent's) when the agent is shared.
+						TenantID:           types.CallerFromContext(ctx).TenantID,
+						UserID:             meta.UserID,
+						SessionID:          meta.SessionID,
+						AssistantMessageID: meta.AssistantMessageID,
+						RequestID:          meta.RequestID,
+						EventBus:           meta.EventBus,
+						ServiceID:          t.service.ID,
+						ServiceName:        t.service.Name,
+						MCPToolName:        t.mcpTool.Name,
+						RegisteredToolName: t.Name(),
+						Description:        t.mcpTool.Description,
+						Args:               args,
+						ToolCallID:         meta.ToolCallID,
+					})
+				}
+				resume()
 				if waitErr != nil {
 					return &types.ToolResult{
 						Success: false,
 						Error:   fmt.Sprintf("Tool approval failed: %v", waitErr),
+					}, nil
+				}
+				if decision.Suspended != nil {
+					return &types.ToolResult{
+						Success: false,
+						Error:   "waiting for the user to approve this tool call",
+						Suspend: decision.Suspended,
 					}, nil
 				}
 				if !decision.Approved {
@@ -209,6 +268,7 @@ func (t *MCPTool) Execute(ctx context.Context, args json.RawMessage) (*types.Too
 						Error:   msg,
 					}, nil
 				}
+				defer t.gate.MarkExecuted(ctx, decision.PendingID)
 				if len(decision.ModifiedArgs) > 0 {
 					args = decision.ModifiedArgs
 					if err := t.ValidateArguments(args); err != nil {
@@ -234,13 +294,21 @@ func (t *MCPTool) Execute(ctx context.Context, args json.RawMessage) (*types.Too
 					freshCtx, freshCancel := context.WithTimeout(meta.ApprovalCtx, t.callToolTimeout(meta.ExecTimeout))
 					defer freshCancel()
 					ctx = freshCtx
+					callWindowDerived = true
 				}
 			}
 		}
 	}
 
+	if len(t.pinnedArguments) > 0 {
+		var pinned MCPInput
+		if json.Unmarshal(t.pinnedArguments, &pinned) != nil || !reflect.DeepEqual(pinned, input) {
+			return &types.ToolResult{Success: false, Error: "已确认的业务参数不能在审批中更换，请重新发起任务"}, nil
+		}
+	}
+	input = t.bindBusinessSession(input, conversationMeta)
 	isStdio := t.service.TransportType == types.MCPTransportStdio
-	meta, _ := ToolExecFromContext(ctx)
+	meta := execMeta
 	oauthSess := oauthSessionFromToolExec(ctx, meta).withAuthWaitTimeout(t.authWaitTimeoutSeconds)
 	toolCallID := ""
 	if meta != nil {
@@ -253,19 +321,23 @@ func (t *MCPTool) Execute(ctx context.Context, args json.RawMessage) (*types.Too
 	// with a longer timeout were silently cancelled mid-flight even though the
 	// transport layers honor the value. Re-derive the window from ApprovalCtx —
 	// the round-level parent without the per-tool deadline. Skipped on the
-	// post-approval path, which already re-derived its window above and whose
-	// swapped ctx no longer carries the exec meta.
-	if meta != nil && meta.ApprovalCtx != nil {
+	// post-approval path, which already re-derived its window above.
+	if !callWindowDerived && meta != nil && meta.ApprovalCtx != nil {
 		callCtx, callCancel := context.WithTimeout(meta.ApprovalCtx, t.callToolTimeout(meta.ExecTimeout))
 		defer callCancel()
 		ctx = callCtx
 	}
 
 	connectAndCall := func(callCtx context.Context) (*mcp.CallToolResult, error) {
-		client, err := getOrCreateMCPClientWithOAuthRetry(
+		client, operationCtx, operationCancel, err := getOrCreateMCPClientWithOAuthRetry(
 			callCtx, t.mcpManager, t.service, t.gate, oauthSess, t.mcpTool.Name, toolCallID,
 		)
+		defer operationCancel()
+		callCtx = operationCtx
 		if err != nil {
+			return nil, err
+		}
+		if err := t.checkCallPolicy(callCtx); err != nil {
 			return nil, err
 		}
 		if isStdio {
@@ -279,14 +351,19 @@ func (t *MCPTool) Execute(ctx context.Context, args json.RawMessage) (*types.Too
 		}
 
 		result, err := client.CallTool(callCtx, t.mcpTool.Name, input)
-		if err != nil && !isStdio {
+		if err != nil && !isStdio && callCtx.Err() == nil && mcp.IsToolCallRetrySafe(err) {
 			logger.GetLogger(callCtx).Warnf("MCP tool call failed, retrying with fresh connection: %v", err)
 			_ = client.Disconnect()
 
-			client, err = getOrCreateMCPClientWithOAuthRetry(
+			client, operationCtx, operationCancel, err = getOrCreateMCPClientWithOAuthRetry(
 				callCtx, t.mcpManager, t.service, t.gate, oauthSess, t.mcpTool.Name, toolCallID,
 			)
+			defer operationCancel()
+			callCtx = operationCtx
 			if err != nil {
+				return nil, err
+			}
+			if err := t.checkCallPolicy(callCtx); err != nil {
 				return nil, err
 			}
 			result, err = client.CallTool(callCtx, t.mcpTool.Name, input)
@@ -303,18 +380,22 @@ func (t *MCPTool) Execute(ctx context.Context, args json.RawMessage) (*types.Too
 		}, nil
 	}
 
-	// Check if result indicates error
+	// Extract text content and image data URIs from result
+	var output string
+	var images []string
+	var skipped int
 	if result.IsError {
-		errorMsg := extractContentText(result.Content)
-		logger.GetLogger(ctx).Warnf("MCP tool returned error: %s", errorMsg)
+		output = extractContentText(result.Content)
+	} else {
+		output, images, skipped = extractContentAndImages(result.Content)
+	}
+	output, err = appendMCPStructuredContent(output, result.Content, result.StructuredContent)
+	if err != nil {
 		return &types.ToolResult{
 			Success: false,
-			Error:   errorMsg,
+			Error:   fmt.Sprintf("Failed to serialize MCP structured result: %v", err),
 		}, nil
 	}
-
-	// Extract text content and image data URIs from result
-	output, images, skipped := extractContentAndImages(result.Content)
 	if skipped > 0 {
 		logger.GetLogger(ctx).Warnf("MCP tool %s: %d image(s) skipped (exceeded count/size/MIME limits)", t.mcpTool.Name, skipped)
 	}
@@ -328,6 +409,14 @@ func (t *MCPTool) Execute(ctx context.Context, args json.RawMessage) (*types.Too
 	// double storage in memory and accidental exposure in logs/SSE.
 	data := make(map[string]interface{})
 	data["content_items"] = redactImageData(result.Content)
+	if result.StructuredContent != nil {
+		data["structured_content"] = result.StructuredContent
+	}
+
+	if result.IsError {
+		logger.GetLogger(ctx).Warnf("MCP tool returned error: %s", output)
+		return &types.ToolResult{Success: false, Error: output, Data: data}, nil
+	}
 
 	logger.GetLogger(ctx).Infof("MCP tool executed successfully: %s (images: %d)", t.mcpTool.Name, len(images))
 
@@ -337,6 +426,68 @@ func (t *MCPTool) Execute(ctx context.Context, args json.RawMessage) (*types.Too
 		Data:    data,
 		Images:  images,
 	}, nil
+}
+
+// appendMCPStructuredContent makes structured results visible to the model,
+// whose tool messages consume Output/Error rather than the Data map. Servers
+// may also return serialized JSON as a compatibility text block; keep that
+// block without appending the same payload a second time.
+func appendMCPStructuredContent(output string, content []mcp.ContentItem, structured any) (string, error) {
+	if structured == nil {
+		return output, nil
+	}
+	payload, err := json.Marshal(structured)
+	if err != nil {
+		return "", err
+	}
+	for _, item := range content {
+		if item.Type != "text" {
+			continue
+		}
+		var fallback any
+		if json.Unmarshal([]byte(item.Text), &fallback) == nil {
+			canonical, _ := json.Marshal(fallback)
+			if bytes.Equal(canonical, payload) {
+				return output, nil
+			}
+		}
+	}
+	// The legacy extractor substitutes a success placeholder for empty content.
+	// Structured-only results have real output, so omit that placeholder.
+	if len(content) == 0 {
+		output = ""
+	}
+	if output != "" {
+		output += "\n\n"
+	}
+	return output + "Structured content:\n" + string(payload), nil
+}
+
+// Policy and cancellation may change while a human completes authorization.
+func (t *MCPTool) checkCallPolicy(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if t.callAuthorizer != nil {
+		if err := t.callAuthorizer(ctx); err != nil {
+			return err
+		}
+	}
+	if t.gate == nil {
+		return nil
+	}
+	tenant, ok := mcpPolicyTenantID(ctx)
+	if !ok {
+		return fmt.Errorf("MCP tool is disabled")
+	}
+	enabled, err := t.gate.IsEnabled(ctx, tenant, t.service.ID, t.mcpTool.Name)
+	if err != nil {
+		return err
+	}
+	if !enabled {
+		return fmt.Errorf("MCP tool is disabled")
+	}
+	return nil
 }
 
 const (
@@ -388,8 +539,8 @@ func extractContentAndImages(content []mcp.ContentItem) (text string, images []s
 			} else if item.Data != "" {
 				skippedImages++
 			}
-		case "resource":
-			textParts = append(textParts, fmt.Sprintf("[Resource: %s]", item.MimeType))
+		case "resource", "resource_link":
+			textParts = append(textParts, resourceText(item))
 		default:
 			if item.Text != "" {
 				textParts = append(textParts, item.Text)
@@ -406,14 +557,37 @@ func extractContentAndImages(content []mcp.ContentItem) (text string, images []s
 	return text, images, skippedImages
 }
 
-// redactImageData returns a copy of content items with image Data fields replaced
-// by a size indicator. This prevents large base64 strings from being stored in the
-// Data map (which may be serialized to logs or SSE events).
+// resourceText renders a resource item for the model: a reference to the
+// resource, followed by its text when the tool embedded a text resource, so
+// the content itself reaches the model.
+func resourceText(item mcp.ContentItem) string {
+	label := "Resource"
+	if item.Type == "resource_link" {
+		label = "Resource link"
+	}
+	ref := item.MimeType
+	switch {
+	case item.URI != "" && item.MimeType != "":
+		ref = fmt.Sprintf("%s (%s)", item.URI, item.MimeType)
+	case item.URI != "":
+		ref = item.URI
+	}
+	placeholder := fmt.Sprintf("[%s: %s]", label, ref)
+	if item.Type == "resource" && item.Text != "" {
+		return placeholder + "\n" + item.Text
+	}
+	return placeholder
+}
+
+// redactImageData returns a copy of content items with base64 Data fields, of
+// images, audio and blob resources, replaced by a size indicator. This prevents
+// large base64 strings from being stored in the Data map (which may be
+// serialized to logs or SSE events).
 func redactImageData(content []mcp.ContentItem) []mcp.ContentItem {
 	redacted := make([]mcp.ContentItem, len(content))
 	for i, item := range content {
 		redacted[i] = item
-		if item.Type == "image" && item.Data != "" {
+		if item.Data != "" {
 			redacted[i].Data = fmt.Sprintf("[redacted, base64_len=%d]", len(item.Data))
 		}
 	}
@@ -438,9 +612,8 @@ func extractContentText(content []mcp.ContentItem) string {
 				mimeType = "image"
 			}
 			textParts = append(textParts, fmt.Sprintf("[Image: %s]", mimeType))
-		case "resource":
-			// For resources, include a reference
-			textParts = append(textParts, fmt.Sprintf("[Resource: %s]", item.MimeType))
+		case "resource", "resource_link":
+			textParts = append(textParts, resourceText(item))
 		default:
 			// For other types, try to include any text or data
 			if item.Text != "" {
@@ -610,9 +783,11 @@ func loadMCPServiceTools(
 	if meta, ok := ToolExecFromContext(ctx); ok && meta != nil {
 		toolCallID = meta.ToolCallID
 	}
-	client, err := getOrCreateMCPClientWithOAuthRetry(
+	client, operationCtx, operationCancel, err := getOrCreateMCPClientWithOAuthRetry(
 		ctx, mcpManager, service, gate, regOAuth, "", toolCallID,
 	)
+	defer operationCancel()
+	ctx = operationCtx
 	if err != nil {
 		logger.GetLogger(ctx).Errorf("Failed to create MCP client for service %s: %v", service.Name, err)
 		return nil, "", err
@@ -639,9 +814,11 @@ func loadMCPServiceTools(
 			Warnf("Failed to list tools from MCP service %s (will retry with fresh connection): %v", service.Name, err)
 		_ = client.Disconnect()
 
-		client, err = getOrCreateMCPClientWithOAuthRetry(
+		client, operationCtx, operationCancel, err = getOrCreateMCPClientWithOAuthRetry(
 			ctx, mcpManager, service, gate, regOAuth, "", toolCallID,
 		)
+		defer operationCancel()
+		ctx = operationCtx
 		if err != nil {
 			logger.GetLogger(ctx).Errorf("Failed to reconnect MCP client for service %s: %v", service.Name, err)
 			return nil, "", err

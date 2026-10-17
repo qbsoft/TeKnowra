@@ -77,7 +77,7 @@ var queueDefinitions = []QueueDefinition{
 		TypeKnowledgePostProcess,
 	}},
 	{Name: QueueSummary, Pool: WorkerPoolEnrichment, Weight: 2, SharedWeight: 2, TaskTypes: []string{
-		TypeSummaryGeneration, TypeDataTableSummary, TypeKnowledgeAutoTag,
+		TypeSummaryGeneration, TypeDataTableSummary, TypeKnowledgeAutoTag, TypeKnowledgeBaseProfile,
 	}},
 	{Name: QueueMultimodal, Pool: WorkerPoolEnrichment, Weight: 1, SharedWeight: 1, TaskTypes: []string{TypeImageMultimodal}},
 	{Name: QueueGraph, Pool: WorkerPoolEnrichment, Weight: 1, SharedWeight: 1, TaskTypes: []string{TypeChunkExtract}},
@@ -252,6 +252,7 @@ const (
 	TypeImageMultimodal          = "image:multimodal"           // 图片多模态处理任务（OCR + VLM Caption）
 	TypeKnowledgePostProcess     = "knowledge:post_process"     // 知识后处理任务（统一调度）
 	TypeKnowledgeAutoTag         = "knowledge:auto_tag"         // 文档自动关联知识库已有标签
+	TypeKnowledgeBaseProfile     = "kb:profile"                 // 知识库描述（画像）生成任务
 	TypeManualProcess            = "manual:process"             // 手工知识更新任务（cleanup + 重新索引）
 	TypeDataSourceSync           = "datasource:sync"            // 数据源同步任务
 	TypeWikiIngest               = "wiki:ingest"                // Wiki 页面同步任务
@@ -483,15 +484,15 @@ type KnowledgeMoveProgress struct {
 	TaskID     string            `json:"task_id"`
 	SourceKBID string            `json:"source_kb_id"`
 	TargetKBID string            `json:"target_kb_id"`
-	Status     KBCloneTaskStatus `json:"status"`
-	Progress   int               `json:"progress"`   // 0-100
-	Total      int               `json:"total"`      // 总知识数
-	Processed  int               `json:"processed"`  // 已处理数
-	Failed     int               `json:"failed"`     // 失败数
-	Message    string            `json:"message"`    // 状态消息
-	Error      string            `json:"error"`      // 错误信息
-	CreatedAt  int64             `json:"created_at"` // 任务创建时间
-	UpdatedAt  int64             `json:"updated_at"` // 最后更新时间
+	Status     KBCloneTaskStatus `json:"status" extensions:"x-agent"`
+	Progress   int               `json:"progress" extensions:"x-agent"`  // 0-100
+	Total      int               `json:"total" extensions:"x-agent"`     // 总知识数
+	Processed  int               `json:"processed" extensions:"x-agent"` // 已处理数
+	Failed     int               `json:"failed" extensions:"x-agent"`    // 失败数
+	Message    string            `json:"message" extensions:"x-agent"`   // 状态消息
+	Error      string            `json:"error" extensions:"x-agent"`     // 错误信息
+	CreatedAt  int64             `json:"created_at"`                     // 任务创建时间
+	UpdatedAt  int64             `json:"updated_at"`                     // 最后更新时间
 }
 
 // ManualProcessPayload represents the manual knowledge processing task payload.
@@ -515,10 +516,24 @@ type ImageMultimodalPayload struct {
 	ChunkID         string `json:"chunk_id"`         // parent text chunk
 	ImageURL        string `json:"image_url"`        // provider:// URL (e.g. local://..., minio://...)
 	ImageLocalPath  string `json:"image_local_path"` // deprecated: kept for backward compat with in-flight tasks
-	EnableOCR       bool   `json:"enable_ocr"`
-	EnableCaption   bool   `json:"enable_caption"`
-	Language        string `json:"language,omitempty"`          // Request locale for {{language}} in prompt templates
-	ImageSourceType string `json:"image_source_type,omitempty"` // Source type of the image (e.g., "scanned_pdf")
+	// ImagePipelineParams carries the tunables of the pipeline this task runs,
+	// resolved from the knowledge base at enqueue time. They are deliberately
+	// not payload fields of their own: two pipelines may each define a field
+	// called "enable_ocr" with a different meaning, so a name only has to be
+	// unambiguous relative to the pipeline that reads it. A key the running
+	// pipeline does not declare is ignored, which is what lets a stored
+	// knowledge base keep working after a pipeline stops reading one.
+	// ImagePipelineID is the pipeline this task runs, resolved from the
+	// knowledge base at enqueue time by types.ResolveImagePipelineID. It
+	// travels in the payload rather than being re-read at handle time for the
+	// same reason ImageAttrsEnabled does: a task already in flight was
+	// enqueued for one pipeline and must not be re-routed by a later edit.
+	ImagePipelineID     ImagePipelineID `json:"image_pipeline,omitempty"`
+	ImagePipelineParams map[string]any  `json:"image_pipeline_params,omitempty"`
+	// Language is the request locale for {{language}} in prompt templates.
+	Language string `json:"language,omitempty"`
+	// ImageSourceType drives the OCR prompt, e.g. "scanned_pdf".
+	ImageSourceType string `json:"image_source_type,omitempty"`
 	// Attempt links this image task back to the parent ProcessDocument
 	// attempt so the worker can record its image[i] subspan under the
 	// same attempt's multimodal stage span.
@@ -527,6 +542,26 @@ type ImageMultimodalPayload struct {
 	// parent's image set. Used as the subspan name suffix
 	// ("multimodal.image[3]") so the timeline preserves order.
 	ImageIndex int `json:"image_index,omitempty"`
+	// ImageAttrsEnabled selects which image pipeline the task runs — see
+	// types.ImagePipelineIDFor and the ImagePipelineID constants. True is the
+	// attribute-observed pipeline: the describe round also observes image
+	// attributes, and the attribute policy decides whether OCR runs for it.
+	// False is the upstream behaviour: a plain caption, then OCR, no attribute
+	// observation. In flight tasks enqueued before the field existed read
+	// false, which is what they were enqueued for — the reason the flag travels
+	// in the payload rather than being re-read from the knowledge base at handle
+	// time.
+	ImageAttrsEnabled bool `json:"image_attrs_enabled,omitempty"`
+	// ImageVectorEnabled is resolved at enqueue time. nil preserves the KB
+	// fallback for tasks queued before per-document indexing overrides existed.
+	ImageVectorEnabled *bool `json:"image_vector_enabled,omitempty"`
+	// ImageActions is the attribute→work table, resolved from the KB config at
+	// enqueue time. A task without it — one already in flight when attribute
+	// observation shipped — falls back to the conservative policy: run OCR.
+	ImageActions ImageActionsConfig `json:"image_actions,omitempty"`
+	// SourceLocators place the image in the original file; copied onto the
+	// OCR and caption chunks built from it.
+	SourceLocators SourceLocators `json:"source_locators,omitempty"`
 }
 
 // KnowledgePostProcessPayload represents the knowledge post process task payload.
@@ -548,6 +583,17 @@ type KnowledgeAutoTagPayload struct {
 	KnowledgeBaseID string `json:"knowledge_base_id"`
 	Language        string `json:"language,omitempty"`
 	Attempt         int    `json:"attempt,omitempty"`
+}
+
+// KnowledgeBaseProfilePayload asks the worker to rebuild the generated
+// description of one knowledge base from its current document profiles.
+// Force bypasses the aggregate-hash short circuit (manual regeneration).
+type KnowledgeBaseProfilePayload struct {
+	TracingContext
+	TenantID        uint64 `json:"tenant_id"`
+	KnowledgeBaseID string `json:"knowledge_base_id"`
+	Language        string `json:"language,omitempty"`
+	Force           bool   `json:"force,omitempty"`
 }
 
 // KBCloneTaskStatus represents the status of a knowledge base clone task

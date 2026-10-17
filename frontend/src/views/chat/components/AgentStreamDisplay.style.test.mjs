@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import vm from 'node:vm'
+import ts from 'typescript'
 import { computed, reactive } from 'vue'
 import { isAssistantTurnComplete } from '../../../utils/steerStreamFork.ts'
 
@@ -18,8 +19,9 @@ test('steer seals animation while keeping the preceding timeline open without co
   const stateBlock = source.slice(source.indexOf('const isConversationDone ='), source.indexOf('const streamingMermaidSvgCache ='))
   const collapseBlock = source.slice(source.indexOf('const shouldShowCollapsedSteps ='), source.indexOf('// Once the steps collapse'))
   const props = reactive({ ragMode: false, session: { steerForked: true, is_completed: true } })
-  const state = vm.runInNewContext(`${stateBlock}\n${collapseBlock}\n({ isConversationDone, isSegmentDone, shouldShowCollapsedSteps })`, {
-    props, computed, isAssistantTurnComplete, intermediateStepsCount: { value: 2 },
+  const state = vm.runInNewContext(ts.transpile(`${stateBlock}\n${collapseBlock}\n({ isConversationDone, isSegmentDone, shouldShowCollapsedSteps })`), {
+    props, computed, isAssistantTurnComplete, intermediateStepsCount: { value: 2 }, eventStream: { value: [] },
+    isAwaitingInput: (m) => m?.run_state === 'awaiting_input',
   })
   assert.equal(state.isSegmentDone.value, true)
   assert.equal(state.isConversationDone.value, false)
@@ -27,6 +29,9 @@ test('steer seals animation while keeping the preceding timeline open without co
   props.session.steerForked = false
   assert.equal(state.isConversationDone.value, true)
   assert.equal(state.shouldShowCollapsedSteps.value, true)
+  props.session.run_state = 'awaiting_input'
+  assert.equal(state.isConversationDone.value, false)
+  assert.equal(state.shouldShowCollapsedSteps.value, false)
 })
 
 test('agent steps use compact muted timeline styling', () => {
@@ -35,7 +40,7 @@ test('agent steps use compact muted timeline styling', () => {
   assert.match(source, /--agent-step-icon-color:\s*var\(--td-text-color-placeholder\)/)
   assert.match(source, /max-height:\s*none/)
   assert.match(source, /overflow-y:\s*visible/)
-  assert.match(source, /\.tree-root \.action-name\s*\{[\s\S]*font-size:\s*14px/)
+  assert.match(source, /\.tree-root \.action-name\s*\{[\s\S]*font-size:\s*(?:14px|var\(--app-text-base\))/)
   assert.match(source, /\.tree-child \.action-title-icon\s*\{[\s\S]*position:\s*absolute/)
   assert.match(source, /function maskIconStyle\(src: string, size = 18\)/)
   assert.match(source, /\.icon-mask\s*\{[\s\S]*background-color:\s*var\(--agent-step-icon-color\)/)
@@ -145,7 +150,10 @@ test('agent mode shows a native placeholder before answer whenever nothing is pe
   assert.match(source, /return !hasPendingStreamingActivity\.value/)
   assert.match(source, /const hasPendingStreamingActivity = computed/)
   assert.match(source, /event\.thinking === true \|\| isThinkingActive\(event\.event_id\)/)
-  assert.match(source, /event\.type === 'tool_approval_required' \|\| event\.type === 'mcp_oauth_required'/)
+  assert.match(
+    source,
+    /event\.type === 'tool_approval_required' \|\|\s*event\.type === 'mcp_oauth_required' \|\|\s*event\.type === 'agent_prompt_required'/,
+  )
   assert.match(source, /class="action-card action-pending"/)
   assert.match(source, /t\('chat\.thinkingAlt'\)/)
   assert.match(source, /chat-timeline-loading\.less/)
