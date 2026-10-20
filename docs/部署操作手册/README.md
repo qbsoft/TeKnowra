@@ -1,6 +1,6 @@
 # TeKnowra 双引擎部署操作手册
 
-版本：1.0 · 核实日期：2026-10-17。
+版本：1.1 · 核实日期：2026-10-21。
 
 本手册面向负责环境安装、配置、维护和恢复的研发及运维。TeKnowra 统一管理身份与资源，Langflow 为默认可视化编排引擎，Eino 为按场景选择的内嵌 Go 引擎。业务开发见[研发操作手册](../研发操作手册/README.md)。本文保存操作步骤，不执行上线、不生成交付包。
 
@@ -25,6 +25,23 @@
 能力桥使用回环地址。不能单把 Langflow URL 改成远端地址，就认为跨机能力桥已完成。容器参考方案使用 `network_mode: service:app`；替换 app 容器必须连同 Langflow 重建，避免后者留在旧网络命名空间。编辑端口仅绑定宿主回环，由受控隧道或认证网关提供研发访问。
 
 当前是单实例发布状态和进程内执行配额；不要直接把app/Langflow副本数改为多个。编辑与运行服务身份分离，Langflow不挂平台完整env、OAuth存储或Docker socket。
+
+### 1.1 已启用的生产公网研发入口
+
+| 系统 | 公网入口 | 认证与实际步骤 |
+|---|---|---|
+| Langflow | <https://flow.yihe.work:9222/login> | 登录表单输入 `teknowra-editor` 与该环境已有密码，进入流程列表；随后在 TeKnowra 目标智能体点“打开编排”，核对草稿名称及 Flow ID |
+| Wren 看板 | <https://ontology.yihe.work:9222/> | 浏览器 HTTP Basic 认证框输入 `ontology-reviewer` 与看板独立密码，进入后核对生产只读提示及项目 |
+
+密码与密钥不写入本手册或Git。服务器受限账号存储为 Windows `D:/deploy/TeKnowra/langflow/private/editor-runner.json`（编辑账号），跳板机 `/root/.teknowra-access/ontology.json`（看板账号）；仅由有权管理员通过受控渠道取用，禁止整份复制/打印/提交。编辑、runner、服务API Key及看板Basic凭据互不通用；不复制本机测试凭据到生产。研发详细登录、权限与发布步骤见[研发手册第2.4节](../研发操作手册/README.md#public-research-login)。
+
+生产 Flow 经既有 TLS 网关与独立受控隧道到宿主回环17861，隧道远端17863仅允许跳板机本机访问；不要公开内部编辑端口。隧道任务 `TeKnowra-Flow-Tunnel`，网关容器 `yihe-proxy`；Wren 看板服务 `teknowra-wren-board` 在跳板机独立自启，配置目录 `/opt/teknowra-wren-board`，经同网关Basic认证对外提供生产语义快照。它不是Wren引擎8099的公网直连，也不是开放业务查询后台。
+
+Wren 公网仅提供模型目录、说明、关系图及现有审定/验收结果读取；写入、配置与试问接口被拒绝。真实业务问数走 TeKnowra → 本人CRM OAuth → MCP → Wren受控网关。后续模型发布必须同步快照，不能把快照显示当作运行模型或权限已更新。
+
+前端容器设置 `LANGFLOW_EDITOR_URL=https://flow.yihe.work:9222`，入口脚本启动时写入 `config.js`。生产覆盖配置位于 `D:/deploy/TeKnowra/langflow/production.override.json`。更改容器环境须仅重建前端，保留原Compose项目/文件、卷及回退版本；restart或只改env_file不会读取新环境。按已批准版本执行 `up -d --no-deps --pull never --no-build frontend` 前，先准备本机已验证镜像与回退镜像并校验Compose差异。本机开发不设置该值，继续默认 `http://127.0.0.1:7861`。不要为浏览器公网访问修改内部 `TEKNOWRA_LANGFLOW_URL`，能力桥仍为受控回环。
+
+验收须同时检查：匿名Flow API返回401/403；看板匿名401、已有Basic认证读取200、写入及试问403；TeKnowra真实点击携带目标草稿ID；本机默认地址保持。2026-10-21已完成上述服务端检查及生产按钮点击；之后用户客户端报告看板无法访问，尚待错误码定位，不把该客户端写为已恢复。遇到浏览器连接/DNS/证书错误，先核对其错误码和代理路由；收到401再检查账号，不关闭认证或复用admin令牌。
 
 ## 2. 安装前准备与版本记录
 
@@ -77,6 +94,7 @@
 
 | 配置 | 要求 |
 |---|---|
+| `LANGFLOW_EDITOR_URL` | 前端容器：生产 `https://flow.yihe.work:9222`；本机不设，默认7861，仅影响编辑跳转 |
 | `TEKNOWRA_LANGFLOW_URL` | 同namespace时 `http://127.0.0.1:7861` |
 | `TEKNOWRA_LANGFLOW_COMPONENTS_ROOT` | 容器内批准的组件源码目录，与挂载一致 |
 | `TEKNOWRA_LANGFLOW_LIBRARY_ROOT` | 批准profile目录，不能指向任意用户上传代码 |
@@ -105,7 +123,7 @@
 
 TeKnowra登录使用OIDC，核对issuer、client、前端可达入口与回调；Casdoor身份映射后，仍需TeKnowra成员/工作空间/角色授权。业务系统可经CAS完成统一账号登录，再由CRM签发本人业务令牌。二者不能混成一个回调。
 
-Langflow画布当前独立研发账号，尚未对接Casdoor单点登录。由管理员提供账号和受控访问，不公开bootstrap账号或把服务API Key当网页登录密码。远程研发访问通过受控隧道/认证入口，不能直接公开回环编辑端口。
+Langflow画布当前独立研发账号，尚未对接Casdoor单点登录。由管理员提供账号和受控访问，不公开bootstrap账号或把服务API Key当网页登录密码。远程研发已使用第1.1节的Flow公网TLS入口及受控隧道，保留独立登录；不能直接公开回环编辑端口。
 
 ### 5.2 MCP回调与本人授权
 

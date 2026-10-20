@@ -1,9 +1,12 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TeKnowra 双引擎部署操作手册</title><style>*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:#f3f6fa;color:#203247;font:16px/1.85 "Microsoft YaHei","PingFang SC",sans-serif}main{max-width:1180px;margin:32px auto;background:#fff;padding:48px 60px;border-radius:14px;box-shadow:0 4px 30px #2032470c}h1{font-size:32px;line-height:1.4;color:#153958}h2{font-size:25px;border-bottom:2px solid #dce9f3;padding-top:30px;padding-bottom:10px}h3{font-size:20px;padding-top:12px}p,li{overflow-wrap:anywhere}a{color:#1765a3;text-decoration:none}a:hover{text-decoration:underline}img{display:block;max-width:100%;height:auto;margin:24px auto;border:1px solid #e0e7ee;border-radius:8px}table{border-collapse:collapse;width:100%;font-size:14px;margin:22px 0}th,td{border:1px solid #d9e3ed;padding:10px 12px;text-align:left;vertical-align:top}th{background:#edf4fb}tr:nth-child(even){background:#fafcfe}code{font-family:Consolas,"Microsoft YaHei",monospace;background:#eef2f6;font-size:.9em;padding:2px 5px;border-radius:3px}pre{background:#162b3e;color:#e7f0f9;padding:20px;overflow:auto;border-radius:8px;line-height:1.65}pre code{background:none;color:inherit;padding:0;font-size:13px;white-space:pre}.toc{background:#f3f8fc;border:1px solid #d6e7f4;border-radius:8px;padding:20px 30px;margin:30px 0}.toc ul{margin:0;padding-left:23px}.toctitle{font-weight:bold;font-size:19px}strong{color:#174e73}.readnote{color:#5c6c7d;font-size:13px}.top{position:fixed;bottom:18px;right:18px;background:#1765a3;color:white;padding:8px 16px;border-radius:20px} @media(max-width:800px){main{margin:0;padding:24px 18px;border-radius:0}table{display:block;overflow-x:auto}h1{font-size:26px}}@media print{body{background:white}main{margin:0;max-width:none;box-shadow:none;padding:0}.toc{break-after:page}h2,h3{break-after:avoid}img,tr,pre{break-inside:avoid}.top{display:none}}</style></head><body><main id="top"><p class="readnote">本地离线阅读版 · 2026-10-17 · 原文 README.md · 无外部脚本或在线资源</p><h1 id="teknowra">TeKnowra 双引擎部署操作手册</h1>
-<p>版本：1.0 · 核实日期：2026-10-17。</p>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TeKnowra 双引擎部署操作手册</title><style>*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:#f3f6fa;color:#203247;font:16px/1.85 "Microsoft YaHei","PingFang SC",sans-serif}main{max-width:1180px;margin:32px auto;background:#fff;padding:48px 60px;border-radius:14px;box-shadow:0 4px 30px #2032470c}h1{font-size:32px;line-height:1.4;color:#153958}h2{font-size:25px;border-bottom:2px solid #dce9f3;padding-top:30px;padding-bottom:10px}h3{font-size:20px;padding-top:12px}p,li{overflow-wrap:anywhere}a{color:#1765a3;text-decoration:none}a:hover{text-decoration:underline}img{display:block;max-width:100%;height:auto;margin:24px auto;border:1px solid #e0e7ee;border-radius:8px}table{border-collapse:collapse;width:100%;font-size:14px;margin:22px 0}th,td{border:1px solid #d9e3ed;padding:10px 12px;text-align:left;vertical-align:top}th{background:#edf4fb}tr:nth-child(even){background:#fafcfe}code{font-family:Consolas,"Microsoft YaHei",monospace;background:#eef2f6;font-size:.9em;padding:2px 5px;border-radius:3px}pre{background:#162b3e;color:#e7f0f9;padding:20px;overflow:auto;border-radius:8px;line-height:1.65}pre code{background:none;color:inherit;padding:0;font-size:13px;white-space:pre}.toc{background:#f3f8fc;border:1px solid #d6e7f4;border-radius:8px;padding:20px 30px;margin:30px 0}.toc ul{margin:0;padding-left:23px}.toctitle{font-weight:bold;font-size:19px}strong{color:#174e73}.readnote{color:#5c6c7d;font-size:13px}.top{position:fixed;bottom:18px;right:18px;background:#1765a3;color:white;padding:8px 16px;border-radius:20px} @media(max-width:800px){main{margin:0;padding:24px 18px;border-radius:0}table{display:block;overflow-x:auto}h1{font-size:26px}}@media print{body{background:white}main{margin:0;max-width:none;box-shadow:none;padding:0}.toc{break-after:page}h2,h3{break-after:avoid}img,tr,pre{break-inside:avoid}.top{display:none}}</style></head><body><main id="top"><p class="readnote">本地离线阅读版 · 2026-10-21 · 原文 README.md · 无外部脚本或在线资源</p><h1 id="teknowra">TeKnowra 双引擎部署操作手册</h1>
+<p>版本：1.1 · 核实日期：2026-10-21。</p>
 <p>本手册面向负责环境安装、配置、维护和恢复的研发及运维。TeKnowra 统一管理身份与资源，Langflow 为默认可视化编排引擎，Eino 为按场景选择的内嵌 Go 引擎。业务开发见<a href="../研发操作手册/README.md">研发操作手册</a>。本文保存操作步骤，不执行上线、不生成交付包。</p>
 <p>当前本机与隔离环境已有运行、授权和恢复验证；用户已取消干净 Linux 验收，因此不能把以下容器参考方案当成任何新主机均已实测的一键安装器。历史交付包已按用户要求删除，本文不依赖它们。</p>
 <div class="toc"><span class="toctitle">目录</span><ul>
-<li><a href="#1">1. 运行拓扑与部署范围</a></li>
+<li><a href="#1">1. 运行拓扑与部署范围</a><ul>
+<li><a href="#11">1.1 已启用的生产公网研发入口</a></li>
+</ul>
+</li>
 <li><a href="#2">2. 安装前准备与版本记录</a><ul>
 <li><a href="#21">2.1 必备清单</a></li>
 <li><a href="#22">2.2 当前已核实的依赖</a></li>
@@ -87,6 +90,33 @@
 </table>
 <p>能力桥使用回环地址。不能单把 Langflow URL 改成远端地址，就认为跨机能力桥已完成。容器参考方案使用 <code>network_mode: service:app</code>；替换 app 容器必须连同 Langflow 重建，避免后者留在旧网络命名空间。编辑端口仅绑定宿主回环，由受控隧道或认证网关提供研发访问。</p>
 <p>当前是单实例发布状态和进程内执行配额；不要直接把app/Langflow副本数改为多个。编辑与运行服务身份分离，Langflow不挂平台完整env、OAuth存储或Docker socket。</p>
+<h3 id="11">1.1 已启用的生产公网研发入口</h3>
+<table>
+<thead>
+<tr>
+<th>系统</th>
+<th>公网入口</th>
+<th>认证与实际步骤</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Langflow</td>
+<td><a href="https://flow.yihe.work:9222/login">https://flow.yihe.work:9222/login</a></td>
+<td>登录表单输入 <code>teknowra-editor</code> 与该环境已有密码，进入流程列表；随后在 TeKnowra 目标智能体点“打开编排”，核对草稿名称及 Flow ID</td>
+</tr>
+<tr>
+<td>Wren 看板</td>
+<td><a href="https://ontology.yihe.work:9222/">https://ontology.yihe.work:9222/</a></td>
+<td>浏览器 HTTP Basic 认证框输入 <code>ontology-reviewer</code> 与看板独立密码，进入后核对生产只读提示及项目</td>
+</tr>
+</tbody>
+</table>
+<p>密码与密钥不写入本手册或Git。服务器受限账号存储为 Windows <code>D:/deploy/TeKnowra/langflow/private/editor-runner.json</code>（编辑账号），跳板机 <code>/root/.teknowra-access/ontology.json</code>（看板账号）；仅由有权管理员通过受控渠道取用，禁止整份复制/打印/提交。编辑、runner、服务API Key及看板Basic凭据互不通用；不复制本机测试凭据到生产。研发详细登录、权限与发布步骤见<a href="../研发操作手册/README.md#public-research-login">研发手册第2.4节</a>。</p>
+<p>生产 Flow 经既有 TLS 网关与独立受控隧道到宿主回环17861，隧道远端17863仅允许跳板机本机访问；不要公开内部编辑端口。隧道任务 <code>TeKnowra-Flow-Tunnel</code>，网关容器 <code>yihe-proxy</code>；Wren 看板服务 <code>teknowra-wren-board</code> 在跳板机独立自启，配置目录 <code>/opt/teknowra-wren-board</code>，经同网关Basic认证对外提供生产语义快照。它不是Wren引擎8099的公网直连，也不是开放业务查询后台。</p>
+<p>Wren 公网仅提供模型目录、说明、关系图及现有审定/验收结果读取；写入、配置与试问接口被拒绝。真实业务问数走 TeKnowra → 本人CRM OAuth → MCP → Wren受控网关。后续模型发布必须同步快照，不能把快照显示当作运行模型或权限已更新。</p>
+<p>前端容器设置 <code>LANGFLOW_EDITOR_URL=https://flow.yihe.work:9222</code>，入口脚本启动时写入 <code>config.js</code>。生产覆盖配置位于 <code>D:/deploy/TeKnowra/langflow/production.override.json</code>。更改容器环境须仅重建前端，保留原Compose项目/文件、卷及回退版本；restart或只改env_file不会读取新环境。按已批准版本执行 <code>up -d --no-deps --pull never --no-build frontend</code> 前，先准备本机已验证镜像与回退镜像并校验Compose差异。本机开发不设置该值，继续默认 <code>http://127.0.0.1:7861</code>。不要为浏览器公网访问修改内部 <code>TEKNOWRA_LANGFLOW_URL</code>，能力桥仍为受控回环。</p>
+<p>验收须同时检查：匿名Flow API返回401/403；看板匿名401、已有Basic认证读取200、写入及试问403；TeKnowra真实点击携带目标草稿ID；本机默认地址保持。2026-10-21已完成上述服务端检查及生产按钮点击；之后用户客户端报告看板无法访问，尚待错误码定位，不把该客户端写为已恢复。遇到浏览器连接/DNS/证书错误，先核对其错误码和代理路由；收到401再检查账号，不关闭认证或复用admin令牌。</p>
 <h2 id="2">2. 安装前准备与版本记录</h2>
 <h3 id="21">2.1 必备清单</h3>
 <table>
@@ -158,6 +188,10 @@
 </thead>
 <tbody>
 <tr>
+<td><code>LANGFLOW_EDITOR_URL</code></td>
+<td>前端容器：生产 <code>https://flow.yihe.work:9222</code>；本机不设，默认7861，仅影响编辑跳转</td>
+</tr>
+<tr>
 <td><code>TEKNOWRA_LANGFLOW_URL</code></td>
 <td>同namespace时 <code>http://127.0.0.1:7861</code></td>
 </tr>
@@ -211,7 +245,7 @@
 <h2 id="5">5. 认证与业务依赖接入</h2>
 <h3 id="51-casdoor">5.1 Casdoor与画布</h3>
 <p>TeKnowra登录使用OIDC，核对issuer、client、前端可达入口与回调；Casdoor身份映射后，仍需TeKnowra成员/工作空间/角色授权。业务系统可经CAS完成统一账号登录，再由CRM签发本人业务令牌。二者不能混成一个回调。</p>
-<p>Langflow画布当前独立研发账号，尚未对接Casdoor单点登录。由管理员提供账号和受控访问，不公开bootstrap账号或把服务API Key当网页登录密码。远程研发访问通过受控隧道/认证入口，不能直接公开回环编辑端口。</p>
+<p>Langflow画布当前独立研发账号，尚未对接Casdoor单点登录。由管理员提供账号和受控访问，不公开bootstrap账号或把服务API Key当网页登录密码。远程研发已使用第1.1节的Flow公网TLS入口及受控隧道，保留独立登录；不能直接公开回环编辑端口。</p>
 <h3 id="52-mcp">5.2 MCP回调与本人授权</h3>
 <p>CRM MCP的上游回调为其自身 <code>/auth/callback</code>；TeKnowra接收授权结果的是前端域名 <code>/api/v1/mcp-oauth/callback</code>。测试15173、原5173和客户HTTPS域名是不同回跳地址，需在允许列表及对应OAuth客户端登记中一致。只追加需要的精确地址，不允许通配所有域名。</p>
 <p>按MCP README配置上游API、OAuth、独立JWT签名密钥、受限持久存储。先核对本人身份，再在聊天触发缺授权工具、完成登录并恢复原任务。选错admin不能算sales01权限通过，旧客户端登记回到5173也不能算15173通过。</p>

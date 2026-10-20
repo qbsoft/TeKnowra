@@ -1,6 +1,6 @@
 # TeKnowra 企业 Agent 研发操作手册
 
-版本：1.5 · 核实日期：2026-10-17 · 适用范围：当前本机 TeKnowra fork、Langflow 和 Eino 双引擎接入。
+版本：1.6 · 核实日期：2026-10-21 · 适用范围：本机开发及已启用的生产公网研发入口、Langflow 和 Eino 双引擎接入。
 
 本手册帮助研发把企业需求做成可配置、可发布、可追溯的 Agent。管理员先准备身份、工作空间、模型和系统连接；研发配置流程、资源与业务规则；业务人员在 TeKnowra 聊天中使用并按自身权限授权。**Langflow 是新建默认引擎，Eino 按已有代码场景选用。**
 
@@ -98,6 +98,36 @@ git -C D:/TeKnowra/tyer-mcp-server status --short
 
 当前平台 OIDC 默认按邮箱映射身份，未知邮箱可能走开户逻辑；CRM 的外部身份按用户名匹配，不能假设会自动创建 CRM 员工。接客户前先建立身份映射表，确认同名、邮箱变更、离职禁用的处理规则，再分配空间和业务权限。平台身份、CRM 身份与 MCP 授权主体需一致，但权限不由邮箱或用户名字符串自动推导。
 
+<a id="public-research-login"></a>
+
+### 2.4 生产公网地址与登录步骤（2026-10-21）
+
+| 用途 | 实际入口 | 登录账号与认证 |
+|---|---|---|
+| TeKnowra 业务与发布 | <https://kb.yihe.work:9222/login> | 已有平台账号；统一身份和原生账号按既有方式使用 |
+| Langflow 研发编排 | <https://flow.yihe.work:9222/login> | `teknowra-editor`，Langflow 独立登录表单 |
+| Wren 语义看板 | <https://ontology.yihe.work:9222/> | `ontology-reviewer`，浏览器 HTTP Basic 认证框 |
+
+**两个研发入口的账号、密码互不通用。** `teknowra-editor` 不能登录 Wren 看板，`ontology-reviewer` 不能登录 Langflow；它们也不是 TeKnowra / Casdoor 的 admin。密码由管理员从各系统已有受限存储通过受控渠道提供，本手册不收录密码、API Key、令牌或签名密钥。
+
+Langflow 实际步骤：
+
+1. 访问上述 Flow 登录地址，在用户名输入 `teknowra-editor`，使用该环境已有编辑密码登录。不要填本机测试密码、runner 密码或服务 API Key。
+2. 看到项目和流程列表后，返回 TeKnowra，进入目标智能体“编辑 → 基本信息 → 打开编排”。生产按钮现在打开 Flow 公网地址并携带该智能体的编辑草稿 ID；若先前被引导登录，登录后再次从该按钮进入。
+3. 确认画布名称及地址中的 Flow ID，区分草稿与固定发布运行图。不要靠同名流程猜测，不为查看而重新生成草稿。
+4. 资源配置、目录连接、同步校验和发布仍按第4章操作。Flow 网页登录仅授予编辑端会话，业务执行仍在 TeKnowra 使用当前人的权限及本人 MCP OAuth；Casdoor 尚未接管画布登录。
+
+Wren 看板实际步骤：
+
+1. 访问上述 Ontology 地址。浏览器弹出 HTTP Basic 用户名/密码框时，填 `ontology-reviewer` 和该看板已有独立密码并确认；这里没有 Langflow 登录表单。
+2. 进入后先确认“生产只读”提示，选择生产项目，阅读模型目录、业务说明、关系图及现有审定/验收结果。展示的是生产语义定义快照，旧结果不是新一次验收。
+3. 当前公网入口不开放审定写入、模型/连接配置、手填身份试问或任意查询；不能把开发看板第7.9节的写入步骤直接用在此入口。模型变更在受控研发环境完成，经发布校验后同步生产快照。
+4. 真实业务问数回到 TeKnowra，通过已授权 CRM MCP 的 `ask_business` 执行，并按需完成本人 CRM OAuth。看板 Basic 登录不授予 CRM 数据权限。
+
+地址打不开与密码错误分开排查：未登录看板 HTTP 401 是认证要求；HTTP 403 表示接口不允许，不能靠换管理员账号绕过。若出现“无法访问此站点”、DNS/连接超时或证书错误，记录浏览器错误码，由管理员检查域名、代理路径、9222端口、网关和证书；不要重置密码或关闭认证。2026-10-21 服务端公网核验：Flow 登录页200、匿名流程API403；看板匿名401、已有认证读取200、写入及试问403。随后用户本机出现无法访问报告，客户端原因仍需结合错误码定位；不将服务端200写成该客户端已恢复。
+
+本机开发仍使用 `http://127.0.0.1:7861/login`；未设置前端 `LANGFLOW_EDITOR_URL` 时“打开编排”继续使用本机地址。公网入口只改变研发浏览器跳转，不改变后端回环能力桥或资源权限。
+
 ## 3. 在 TeKnowra 页面创建与配置智能体
 
 ### 3.1 创建入口
@@ -144,7 +174,7 @@ git -C D:/TeKnowra/tyer-mcp-server status --short
 
 ![流程接入、资源同步、固定发布和回退入口，2026-10-17 实拍](images/03-langflow-release.png)
 
-#### 现有研发账号与正常登录步骤
+#### 本机研发账号与正常登录步骤（生产见第2.4节）
 
 当前本机画布地址是 `http://127.0.0.1:7861`，编辑用户名为 **`teknowra-editor`**。它是普通 active 账号，不是超级管理员。运行账号 `teknowra-runner` 专门持有固定发布的私有运行图，研发不要用它登录编辑。两者均不是 TeKnowra 的 admin / sales01，也不是 Casdoor 账号。
 
@@ -630,6 +660,8 @@ Set-Location D:/CRM/CRM2/crm/ask-wren
 模型与 Golden 通过后，TeKnowra Agent 选择 CRM-MCP 的 `ask_business`（需要目录时加 `list_ask_objects`），再在图中选择并发布；不是把 Wren 数据库连接配置复制到 Langflow。
 
 ### 7.9 wren-board 怎么给业务审定
+
+生产公网看板的地址、Basic登录和只读限制见第2.4节。以下写入和试问步骤仅用于获准的开发看板，不适用于生产只读入口。
 
 本机有 `D:/wren-board` 源码，README 入口为 `python -m wrenboard --project D:\CRM\CRM2\crm\ask-wren --port 18800`。本轮未检测到 18800 监听，未擅自启动服务；以下界面图来自项目 2026-10-06 真实留图，导航与当前 README 一致。
 

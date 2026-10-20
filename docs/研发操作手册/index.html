@@ -1,5 +1,5 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TeKnowra 企业 Agent 研发操作手册</title><style>*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:#f3f6fa;color:#203247;font:16px/1.85 "Microsoft YaHei","PingFang SC",sans-serif}main{max-width:1180px;margin:32px auto;background:#fff;padding:48px 60px;border-radius:14px;box-shadow:0 4px 30px #2032470c}h1{font-size:32px;line-height:1.4;color:#153958}h2{font-size:25px;border-bottom:2px solid #dce9f3;padding-top:30px;padding-bottom:10px}h3{font-size:20px;padding-top:12px}p,li{overflow-wrap:anywhere}a{color:#1765a3;text-decoration:none}a:hover{text-decoration:underline}img{display:block;max-width:100%;height:auto;margin:24px auto;border:1px solid #e0e7ee;border-radius:8px}table{border-collapse:collapse;width:100%;font-size:14px;margin:22px 0}th,td{border:1px solid #d9e3ed;padding:10px 12px;text-align:left;vertical-align:top}th{background:#edf4fb}tr:nth-child(even){background:#fafcfe}code{font-family:Consolas,"Microsoft YaHei",monospace;background:#eef2f6;font-size:.9em;padding:2px 5px;border-radius:3px}pre{background:#162b3e;color:#e7f0f9;padding:20px;overflow:auto;border-radius:8px;line-height:1.65}pre code{background:none;color:inherit;padding:0;font-size:13px;white-space:pre}.toc{background:#f3f8fc;border:1px solid #d6e7f4;border-radius:8px;padding:20px 30px;margin:30px 0}.toc ul{margin:0;padding-left:23px}.toctitle{font-weight:bold;font-size:19px}strong{color:#174e73}.readnote{color:#5c6c7d;font-size:13px}.top{position:fixed;bottom:18px;right:18px;background:#1765a3;color:white;padding:8px 16px;border-radius:20px} @media(max-width:800px){main{margin:0;padding:24px 18px;border-radius:0}table{display:block;overflow-x:auto}h1{font-size:26px}}@media print{body{background:white}main{margin:0;max-width:none;box-shadow:none;padding:0}.toc{break-after:page}h2,h3{break-after:avoid}img,tr,pre{break-inside:avoid}.top{display:none}}</style></head><body><main id="top"><p class="readnote">本地离线阅读版 · 2026-10-17 · 原文 README.md · 无外部脚本或在线资源</p><h1 id="teknowra-agent">TeKnowra 企业 Agent 研发操作手册</h1>
-<p>版本：1.5 · 核实日期：2026-10-17 · 适用范围：当前本机 TeKnowra fork、Langflow 和 Eino 双引擎接入。</p>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TeKnowra 企业 Agent 研发操作手册</title><style>*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:#f3f6fa;color:#203247;font:16px/1.85 "Microsoft YaHei","PingFang SC",sans-serif}main{max-width:1180px;margin:32px auto;background:#fff;padding:48px 60px;border-radius:14px;box-shadow:0 4px 30px #2032470c}h1{font-size:32px;line-height:1.4;color:#153958}h2{font-size:25px;border-bottom:2px solid #dce9f3;padding-top:30px;padding-bottom:10px}h3{font-size:20px;padding-top:12px}p,li{overflow-wrap:anywhere}a{color:#1765a3;text-decoration:none}a:hover{text-decoration:underline}img{display:block;max-width:100%;height:auto;margin:24px auto;border:1px solid #e0e7ee;border-radius:8px}table{border-collapse:collapse;width:100%;font-size:14px;margin:22px 0}th,td{border:1px solid #d9e3ed;padding:10px 12px;text-align:left;vertical-align:top}th{background:#edf4fb}tr:nth-child(even){background:#fafcfe}code{font-family:Consolas,"Microsoft YaHei",monospace;background:#eef2f6;font-size:.9em;padding:2px 5px;border-radius:3px}pre{background:#162b3e;color:#e7f0f9;padding:20px;overflow:auto;border-radius:8px;line-height:1.65}pre code{background:none;color:inherit;padding:0;font-size:13px;white-space:pre}.toc{background:#f3f8fc;border:1px solid #d6e7f4;border-radius:8px;padding:20px 30px;margin:30px 0}.toc ul{margin:0;padding-left:23px}.toctitle{font-weight:bold;font-size:19px}strong{color:#174e73}.readnote{color:#5c6c7d;font-size:13px}.top{position:fixed;bottom:18px;right:18px;background:#1765a3;color:white;padding:8px 16px;border-radius:20px} @media(max-width:800px){main{margin:0;padding:24px 18px;border-radius:0}table{display:block;overflow-x:auto}h1{font-size:26px}}@media print{body{background:white}main{margin:0;max-width:none;box-shadow:none;padding:0}.toc{break-after:page}h2,h3{break-after:avoid}img,tr,pre{break-inside:avoid}.top{display:none}}</style></head><body><main id="top"><p class="readnote">本地离线阅读版 · 2026-10-21 · 原文 README.md · 无外部脚本或在线资源</p><h1 id="teknowra-agent">TeKnowra 企业 Agent 研发操作手册</h1>
+<p>版本：1.6 · 核实日期：2026-10-21 · 适用范围：本机开发及已启用的生产公网研发入口、Langflow 和 Eino 双引擎接入。</p>
 <p>本手册帮助研发把企业需求做成可配置、可发布、可追溯的 Agent。管理员先准备身份、工作空间、模型和系统连接；研发配置流程、资源与业务规则；业务人员在 TeKnowra 聊天中使用并按自身权限授权。<strong>Langflow 是新建默认引擎，Eino 按已有代码场景选用。</strong></p>
 <p>本手册编写与登录核实没有修改产品代码或发布版本，没有上线，也没有生成交付包。后续按用户明确要求，仅通过官方自助改密接口调整了本机编辑账号密码并同步已有受限存储；未改服务密钥或账号权限。本文中的创建、授权、发布和业务执行命令供研发后续操作，不表示已执行这些动作。</p>
 <p>阅读版见同目录 <code>index.html</code>；截图、架构图在 <code>images/</code>。本机路径可按客户环境调整，账号、密钥及连接配置应由管理员通过受控渠道提供，不填写到本手册或流程画布。</p>
@@ -14,6 +14,7 @@
 <li><a href="#21">2.1 先确认位置与运行入口</a></li>
 <li><a href="#22">2.2 管理员先准备，研发再编排</a></li>
 <li><a href="#23-casdoor">2.3 Casdoor 对接需要交付哪些信息</a></li>
+<li><a href="#24-2026-10-21">2.4 生产公网地址与登录步骤（2026-10-21）</a></li>
 </ul>
 </li>
 <li><a href="#3-teknowra">3. 在 TeKnowra 页面创建与配置智能体</a><ul>
@@ -258,6 +259,51 @@ git -C D:/TeKnowra/tyer-mcp-server status --short
 <h3 id="23-casdoor">2.3 Casdoor 对接需要交付哪些信息</h3>
 <p>平台管理员核对 <code>OIDC_AUTH_ENABLE</code>、Issuer/Discovery、Client ID、Client Secret、授权/Token/UserInfo/JWKS 端点和 Scopes，配置保留在现有受限存储。配置字段见 <code>repo/internal/config/config.go</code>。不同网络下浏览器可达地址与后端可达地址可能不同，应逐个核对回调、Issuer 与证书，不能只改登录按钮。</p>
 <p>当前平台 OIDC 默认按邮箱映射身份，未知邮箱可能走开户逻辑；CRM 的外部身份按用户名匹配，不能假设会自动创建 CRM 员工。接客户前先建立身份映射表，确认同名、邮箱变更、离职禁用的处理规则，再分配空间和业务权限。平台身份、CRM 身份与 MCP 授权主体需一致，但权限不由邮箱或用户名字符串自动推导。</p>
+<p><a id="public-research-login"></a></p>
+<h3 id="24-2026-10-21">2.4 生产公网地址与登录步骤（2026-10-21）</h3>
+<table>
+<thead>
+<tr>
+<th>用途</th>
+<th>实际入口</th>
+<th>登录账号与认证</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>TeKnowra 业务与发布</td>
+<td><a href="https://kb.yihe.work:9222/login">https://kb.yihe.work:9222/login</a></td>
+<td>已有平台账号；统一身份和原生账号按既有方式使用</td>
+</tr>
+<tr>
+<td>Langflow 研发编排</td>
+<td><a href="https://flow.yihe.work:9222/login">https://flow.yihe.work:9222/login</a></td>
+<td><code>teknowra-editor</code>，Langflow 独立登录表单</td>
+</tr>
+<tr>
+<td>Wren 语义看板</td>
+<td><a href="https://ontology.yihe.work:9222/">https://ontology.yihe.work:9222/</a></td>
+<td><code>ontology-reviewer</code>，浏览器 HTTP Basic 认证框</td>
+</tr>
+</tbody>
+</table>
+<p><strong>两个研发入口的账号、密码互不通用。</strong> <code>teknowra-editor</code> 不能登录 Wren 看板，<code>ontology-reviewer</code> 不能登录 Langflow；它们也不是 TeKnowra / Casdoor 的 admin。密码由管理员从各系统已有受限存储通过受控渠道提供，本手册不收录密码、API Key、令牌或签名密钥。</p>
+<p>Langflow 实际步骤：</p>
+<ol>
+<li>访问上述 Flow 登录地址，在用户名输入 <code>teknowra-editor</code>，使用该环境已有编辑密码登录。不要填本机测试密码、runner 密码或服务 API Key。</li>
+<li>看到项目和流程列表后，返回 TeKnowra，进入目标智能体“编辑 → 基本信息 → 打开编排”。生产按钮现在打开 Flow 公网地址并携带该智能体的编辑草稿 ID；若先前被引导登录，登录后再次从该按钮进入。</li>
+<li>确认画布名称及地址中的 Flow ID，区分草稿与固定发布运行图。不要靠同名流程猜测，不为查看而重新生成草稿。</li>
+<li>资源配置、目录连接、同步校验和发布仍按第4章操作。Flow 网页登录仅授予编辑端会话，业务执行仍在 TeKnowra 使用当前人的权限及本人 MCP OAuth；Casdoor 尚未接管画布登录。</li>
+</ol>
+<p>Wren 看板实际步骤：</p>
+<ol>
+<li>访问上述 Ontology 地址。浏览器弹出 HTTP Basic 用户名/密码框时，填 <code>ontology-reviewer</code> 和该看板已有独立密码并确认；这里没有 Langflow 登录表单。</li>
+<li>进入后先确认“生产只读”提示，选择生产项目，阅读模型目录、业务说明、关系图及现有审定/验收结果。展示的是生产语义定义快照，旧结果不是新一次验收。</li>
+<li>当前公网入口不开放审定写入、模型/连接配置、手填身份试问或任意查询；不能把开发看板第7.9节的写入步骤直接用在此入口。模型变更在受控研发环境完成，经发布校验后同步生产快照。</li>
+<li>真实业务问数回到 TeKnowra，通过已授权 CRM MCP 的 <code>ask_business</code> 执行，并按需完成本人 CRM OAuth。看板 Basic 登录不授予 CRM 数据权限。</li>
+</ol>
+<p>地址打不开与密码错误分开排查：未登录看板 HTTP 401 是认证要求；HTTP 403 表示接口不允许，不能靠换管理员账号绕过。若出现“无法访问此站点”、DNS/连接超时或证书错误，记录浏览器错误码，由管理员检查域名、代理路径、9222端口、网关和证书；不要重置密码或关闭认证。2026-10-21 服务端公网核验：Flow 登录页200、匿名流程API403；看板匿名401、已有认证读取200、写入及试问403。随后用户本机出现无法访问报告，客户端原因仍需结合错误码定位；不将服务端200写成该客户端已恢复。</p>
+<p>本机开发仍使用 <code>http://127.0.0.1:7861/login</code>；未设置前端 <code>LANGFLOW_EDITOR_URL</code> 时“打开编排”继续使用本机地址。公网入口只改变研发浏览器跳转，不改变后端回环能力桥或资源权限。</p>
 <h2 id="3-teknowra">3. 在 TeKnowra 页面创建与配置智能体</h2>
 <h3 id="31">3.1 创建入口</h3>
 <ol>
@@ -325,7 +371,7 @@ git -C D:/TeKnowra/tyer-mcp-server status --short
 <li>点击“打开编排”。如果显示登录页，按下方步骤使用已有编辑账号登录，再从 TeKnowra 再次点击“打开编排”回到目标草稿。不要在项目列表误开同名的历史副本。</li>
 </ol>
 <p><img alt="流程接入、资源同步、固定发布和回退入口，2026-10-17 实拍" src="images/03-langflow-release.png" /></p>
-<h4 id="_1">现有研发账号与正常登录步骤</h4>
+<h4 id="24">本机研发账号与正常登录步骤（生产见第2.4节）</h4>
 <p>当前本机画布地址是 <code>http://127.0.0.1:7861</code>，编辑用户名为 <strong><code>teknowra-editor</code></strong>。它是普通 active 账号，不是超级管理员。运行账号 <code>teknowra-runner</code> 专门持有固定发布的私有运行图，研发不要用它登录编辑。两者均不是 TeKnowra 的 admin / sales01，也不是 Casdoor 账号。</p>
 <p>当前密码保存在已有受限文件：</p>
 <p><code>D:/TeKnowra/research/selection/langflow-decision-test-20261013/data/teknowra-release-identities.local.json</code></p>
@@ -452,7 +498,7 @@ Remove-Variable lfLocalIdentity
 ]
 </code></pre>
 <p>执行时 <code>args</code> 必须为空，只接受最多 64 KiB 的单个 JSON 对象作为 stdin；不能传任意命令、原件路径或凭据。金额用十进制字符串，比例用数字。schema 只支持当前实现的简单字段约束，不使用远程引用或复杂组合。入口与 schema 检查不等于脚本内容安全，脚本仍须研发审查并在受控沙箱运行。</p>
-<h4 id="_2">已有业务技能怎样选</h4>
+<h4 id="_1">已有业务技能怎样选</h4>
 <table>
 <thead>
 <tr>
@@ -883,6 +929,7 @@ properties:
 <p>此脚本会构建模型、查询开发库、临时启动容器内 Golden 服务和宿主 18099 relay、运行 Java 测试，再生成说明书/看板结果。执行前检查端口和开发库范围；不能在不知情时当“看一下版本”的检查命令运行。不要执行 <code>ops/readonly_role.py</code> 作为日常验收：它会修改只读账号密码与凭据。</p>
 <p>模型与 Golden 通过后，TeKnowra Agent 选择 CRM-MCP 的 <code>ask_business</code>（需要目录时加 <code>list_ask_objects</code>），再在图中选择并发布；不是把 Wren 数据库连接配置复制到 Langflow。</p>
 <h3 id="79-wren-board">7.9 wren-board 怎么给业务审定</h3>
+<p>生产公网看板的地址、Basic登录和只读限制见第2.4节。以下写入和试问步骤仅用于获准的开发看板，不适用于生产只读入口。</p>
 <p>本机有 <code>D:/wren-board</code> 源码，README 入口为 <code>python -m wrenboard --project D:\CRM\CRM2\crm\ask-wren --port 18800</code>。本轮未检测到 18800 监听，未擅自启动服务；以下界面图来自项目 2026-10-06 真实留图，导航与当前 README 一致。</p>
 <p><img alt="wren-board 业务口径审定，2026-10-06 项目留图" src="images/10-wren-review-history.jpg" /></p>
 <ol>
@@ -896,7 +943,7 @@ properties:
 <h3 id="710-dowhy">7.10 用 DoWhy 分析经营机制</h3>
 <p><strong>Wren 负责按业务语义和本人权限取数；DoWhy 负责执行已定义的分析计算。</strong> DoWhy 已接入 CRM MCP，不是独立 Agent 引擎，也不代替 Wren 建模技能。业务研发通过 MCP 工具使用它，不需要在画布里写任意 Python 或直接连接业务数据库。</p>
 <p>实际链路是：TeKnowra 当前用户 → 本人 CRM OAuth → CRM 菜单与数据范围 → Wren 固定语义模板及网关校验 → 完整授权明细 → MCP 启动独立 DoWhy 子进程 → 返回结构化证据与结论。DoWhy 子进程只接收本次 JSON 数据，不接收数据库、OAuth 或模型凭据。</p>
-<h4 id="_3">管理员准备独立计算环境</h4>
+<h4 id="_2">管理员准备独立计算环境</h4>
 <ol>
 <li>查看 MCP 仓库 <code>mcp-tyer-crm/requirements-dowhy.txt</code>，当前固定 <code>dowhy==0.14</code>。在独立 Python 环境安装；不要往正在运行 FastMCP 的环境直接追加整套科学计算依赖。</li>
 <li>本机已存在 <code>D:/TeKnowra/research/dowhy-pilot-20261006/.venv/Scripts/python.exe</code>，可复用，不必新装。新环境由管理员创建虚拟环境，再执行该解释器的 <code>-m pip install -r mcp-tyer-crm/requirements-dowhy.txt</code>。</li>
@@ -947,7 +994,7 @@ properties:
 </tr>
 </tbody>
 </table>
-<h4 id="_4">当前已实现什么，结果怎样读</h4>
+<h4 id="_3">当前已实现什么，结果怎样读</h4>
 <p><strong>第一层是价量机制分解。</strong> 图和乘积机制来自“销售额＝销量×加权成交价”的业务恒等式，不是从两个期间的汇总值中发现经营因果。计算先对平授权范围内完整明细，不能静默丢弃坏行、截断、缺失或重复记录，再用 DoWhy GCM 计算四种价量组合，并对称分摊数量和价格贡献。</p>
 <p>例如纯合成数据：上期100吨、70万元，本期120吨、96万元。总额增加26万元，数量贡献15万元、加权成交价贡献11万元。此例只是说明计算口径，不是某个客户的实际运行结果。价格项包含客户、订单组合变化，不能说“调价带来了11万元收入”，更不能据此断言业务员或交付问题是根因。</p>
 <table>
@@ -987,7 +1034,7 @@ properties:
 <p><strong>第二层是限定的模拟经营因果试点。</strong> 仅在用户明确要求本机模拟、商品名带“模拟-”、<code>include_business_evidence=true</code> 时使用。当前场景为“交付延迟影响采购”“延迟存在但不影响采购”“市场需求下降”“成交价上涨”“多因素叠加”。数据还必须标记 <code>simulation=true</code>；不是企业真实因果分析的通用入口。</p>
 <p>该试点按客户配对两期，至少200条记录、100个完整客户；固定人工因果图和线性加性假设，按客户拆分训练与留出集，并进行50次客户聚类 bootstrap。输出包括延迟效应、探索性区间、留出误差及解释残差。当前门槛为留出采购量 RMSE 不超过5、解释残差不超过每客户2吨；不合格直接拒绝。结果是<strong>每客户后续采购量</strong>的变化，不能与第一层销售额贡献混加。它仍返回 <code>businessRootCauseVerified=false</code>，没有完成图证伪或噪声独立性验证。</p>
 <p>新增真实企业因果场景，需要另外确认时间顺序、混杂因素、样本完整性、业务因果图和验证标准，再扩展受控工具。只新建 Wren MDL 或换提示词，不能自动获得可信因果推断。</p>
-<h4 id="_5">定向验证和排错</h4>
+<h4 id="_4">定向验证和排错</h4>
 <p>先用独立 DoWhy 解释器执行 MCP 仓库的 <code>tests/test_dowhy_runner.py</code>、<code>tests/test_repeat_purchase.py</code>、<code>tests/test_sales_reconciliation.py</code>；MCP 本身使用自己的解释器验证 <code>tests/test_sales_mechanism.py</code>。这些是离线单元测试，不等于真实账号权限或生产数据验收。完整场景另记录：用户与资源范围、真实工具调用、取数计划、输入口径、真实执行标记、核对结果和失败拒绝。</p>
 <table>
 <thead>
