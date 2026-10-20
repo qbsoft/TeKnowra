@@ -25,9 +25,15 @@ def configuration(path):
     try:
         data = json.loads(path.read_text(encoding='utf-8-sig'))
         images = data['images']
-        if (data['project'] != 'teknowra' or set(images) != {'app', 'langflow'}
-                or images['app'] != 'liugl2025/teknowra-app:latest'
-                or not re.fullmatch(r'(?:ghcr\.io/qbsoft|liugl2025)/teknowra-langflow@sha256:[0-9a-f]{64}', images['langflow'])):
+        kind = data.get('kind', 'teknowra-langflow')
+        profiles = {
+            'teknowra-langflow': ('teknowra', 'liugl2025/teknowra-app:latest',
+                                 r'(?:ghcr\.io/qbsoft|liugl2025)/teknowra-langflow@sha256:[0-9a-f]{64}'),
+            'crm-wren': ('crm', 'ghcr.io/qbsoft/crm-backend:latest',
+                         r'ghcr\.io/qbsoft/crm-wren@sha256:[0-9a-f]{64}')}
+        project, app, sidecar = profiles[kind]
+        if (data['project'] != project or set(images) != {'app', 'langflow'}
+                or images['app'] != app or not re.fullmatch(sidecar, images['langflow'])):
             raise ValueError()
         compose = data['compose_files']
         guards = data['guard_files']
@@ -51,6 +57,34 @@ def configuration(path):
     return data, guard
 
 
+class CRMWrenDocker(recovery.Docker):
+    """Translate fixed CRM service names only after verifying their real labels."""
+    services = {'app': 'crm-backend', 'langflow': 'crm-wren'}
+
+    def inspect(self, service):
+        actual = self.services[service]
+        item = super().inspect(actual)
+        if item is None:
+            return None
+        if item['project'] != 'crm' or item['service'] != actual:
+            raise RecoveryError('container-identity-mismatch')
+        return {**item, 'service': service}
+
+    def healthy(self, item):
+        code = ('import os,urllib.request; '
+                'r=urllib.request.Request("http://127.0.0.1:8099/v1/catalog", '
+                'headers={"X-Ask-Wren-Token":os.environ["ASK_WREN_TOKEN"]}); '
+                'print(urllib.request.urlopen(r,timeout=3).status)')
+        try:
+            return self.run(['exec', item['id'], 'python', '-c', code], timeout=8) == '200'
+        except RecoveryError:
+            return False
+
+    def recreate(self):
+        self.run([*self.compose, 'up', '-d', '--no-deps', '--no-build', '--pull', 'never',
+                  '--force-recreate', 'crm-wren'], timeout=120)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', required=True)
@@ -60,13 +94,16 @@ def main():
     stopped = threading.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stopped.set())
+    project = 'unconfigured'
     def emit(event):
-        print(json.dumps({'event': event, 'project': 'teknowra'}), flush=True)
+        print(json.dumps({'event': event, 'project': project}), flush=True)
     try:
         with recovery.exclusive(Path(args.config).resolve().parent / '.production-recovery.lock'):
             data, guard = configuration(args.config)
+            project = data['project']
+            adapter = CRMWrenDocker if data.get('kind') == 'crm-wren' else recovery.Docker
             controller = recovery.Reconciler(
-                recovery.Docker(args.docker, data['project'], data['compose_files']),
+                adapter(args.docker, data['project'], data['compose_files']),
                 data['project'], data['images'], guard,
                 sleep=stopped.wait, cancelled=stopped.is_set)
             previous = None
