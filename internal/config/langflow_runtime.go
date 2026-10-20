@@ -79,21 +79,21 @@ func (c *Config) loadLangflowBindings(raw []byte) error {
 }
 func (c *Config) loadLangflowFile() error {
 	path := os.Getenv("TEKNOWRA_LANGFLOW_BINDINGS_FILE")
-	if path == "" {
-		return nil
-	}
-	info, err := os.Stat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Size() > 1024*1024 {
-		return fmt.Errorf("Langflow bindings file unavailable or too large")
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("Langflow bindings file unavailable")
-	}
-	if err = c.loadLangflowBindings(raw); err != nil {
-		return err
+	if path != "" {
+		info, err := os.Stat(path)
+		if err != nil || !info.Mode().IsRegular() || info.Size() > 1024*1024 {
+			return fmt.Errorf("Langflow bindings file unavailable or too large")
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("Langflow bindings file unavailable")
+		}
+		if err = c.loadLangflowBindings(raw); err != nil {
+			return err
+		}
 	}
 	if releasePath := os.Getenv("TEKNOWRA_LANGFLOW_RELEASES_FILE"); releasePath != "" {
+		var err error
 		c.langflowReleases, err = langflowrelease.Open(releasePath)
 		if err != nil {
 			return err
