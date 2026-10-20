@@ -1,0 +1,33 @@
+# Keep the tested Langflow version; UBI 10 requires x86-64-v3 and cannot boot
+# on production Ivy Bridge. The official Python/Bookworm amd64 base can.
+FROM python:3.14.7-slim-bookworm@sha256:998acd06f485adfd6890e3e15a4b542543e0cf22ff904310095da328a5e3e561 AS dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential git libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+COPY integrations/langflow/delivery/constraints-cpu-compatible.txt /tmp/constraints.txt
+RUN pip install --no-cache-dir -c /tmp/constraints.txt \
+      langflow==1.12.5 langflow-base==1.12.5 lfx==1.12.5 \
+    && pip check
+
+FROM python:3.14.7-slim-bookworm@sha256:998acd06f485adfd6890e3e15a4b542543e0cf22ff904310095da328a5e3e561
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      curl git libpq5 libgomp1 libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --uid 1000 --create-home --home-dir /app/data langflow \
+    && mkdir -p /app/langflow && chown -R 1000:1000 /app
+COPY --from=dependencies /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH" \
+    HOME=/app/data \
+    PYTHONDONTWRITEBYTECODE=1 \
+    LANGFLOW_AUTO_LOGIN=false \
+    LANGFLOW_ENABLE_SIGNUP=false \
+    LANGFLOW_STORE_ENVIRONMENT_VARIABLES=false \
+    LANGFLOW_DO_NOT_TRACK=true \
+    DO_NOT_TRACK=true \
+    LANGFLOW_WORKERS=1
+LABEL org.opencontainers.image.source="https://github.com/qbsoft/TeKnowra" \
+      org.opencontainers.image.title="TeKnowra Langflow CPU-compatible runtime"
+USER 1000:1000
+WORKDIR /app
+CMD ["langflow", "run"]

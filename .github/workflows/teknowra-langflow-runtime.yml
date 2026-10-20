@@ -1,0 +1,83 @@
+name: teknowra-langflow-runtime
+on:
+  push:
+    branches: ['ops/langflow-cpu-compatible-*']
+    paths:
+      - '.github/workflows/teknowra-langflow-runtime.yml'
+      - 'integrations/langflow/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+concurrency:
+  group: teknowra-langflow-runtime-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: integrations/langflow/delivery/Dockerfile.cpu-compatible
+          platforms: linux/amd64
+          load: true
+          tags: teknowra-langflow-verify:${{ github.sha }}
+          cache-from: type=gha,scope=langflow-cpu
+          cache-to: type=gha,mode=max,scope=langflow-cpu
+      - name: Verify component contracts and fail-closed policies
+        env:
+          IMAGE: teknowra-langflow-verify:${{ github.sha }}
+        run: |
+          docker run --rm --network none --entrypoint python "$IMAGE" -m pip check
+          docker run --rm --network none --entrypoint python \
+            -v "$PWD/integrations/langflow:/source:ro" -v "$PWD/skills:/skills:ro" \
+            -w /source -e PYTHONPATH=/source:/source/components "$IMAGE" \
+            -m unittest discover -s tests -p 'test_components.py' -v
+          for test in test_skills test_reviewed_experts test_canonical_draft_policy; do
+            docker run --rm --network none --entrypoint python \
+              -v "$PWD/integrations/langflow:/source:ro" -w /source \
+              -e PYTHONPATH=/source:/source/components "$IMAGE" \
+              -m unittest discover -s tests -p "$test.py" -v
+          done
+      - name: Verify Ivy Bridge instruction set
+        env:
+          IMAGE: teknowra-langflow-verify:${{ github.sha }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-user-static
+          docker run --rm --network none --entrypoint /usr/local/bin/qemu-x86_64-static \
+            -v /usr/bin/qemu-x86_64-static:/usr/local/bin/qemu-x86_64-static:ro \
+            "$IMAGE" -cpu IvyBridge /opt/venv/bin/python \
+            -c 'import langflow, lfx, pydantic, ssl; import importlib.metadata as m; assert m.version("langflow")=="1.12.5"; print("IVYBRIDGE_IMPORT_OK")'
+      - name: Verify authenticated server startup without network access
+        env:
+          IMAGE: teknowra-langflow-verify:${{ github.sha }}
+        run: |
+          docker run -d --name langflow-smoke --network none \
+            -e LANGFLOW_SUPERUSER=ci-bootstrap -e LANGFLOW_SUPERUSER_PASSWORD="$(openssl rand -hex 32)" \
+            "$IMAGE" langflow run --host 127.0.0.1 --port 7861
+          ready=false
+          for i in $(seq 1 36); do
+            if docker exec langflow-smoke python -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:7861/health", timeout=2)' 2>/dev/null; then
+              ready=true; break
+            fi
+            sleep 5
+          done
+          docker stop langflow-smoke >/dev/null
+          test "$ready" = true
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish only the verified immutable runtime
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          docker tag teknowra-langflow-verify:$SHA ghcr.io/qbsoft/teknowra-langflow:cpu-$SHA
+          docker push ghcr.io/qbsoft/teknowra-langflow:cpu-$SHA
+          docker image inspect --format '{{json .RepoDigests}}' ghcr.io/qbsoft/teknowra-langflow:cpu-$SHA
