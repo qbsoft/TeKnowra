@@ -72,3 +72,20 @@ Write-Host 'PASS: validate and refresh both frontend upstream resolutions'
 $script:proxyBroken=$false
 Probe-ProxyRoutes
 Write-Host 'PASS: actual backend JSON through both proxy routes is required'
+
+# Public workflow metadata shares the authenticated quota; do not fall back to
+# the proxy exit IP's exhausted anonymous quota. No network or real token here.
+$apiFunction = $ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Api'}, $true)
+. ([scriptblock]::Create($apiFunction.Extent.Text))
+$script:packageToken = 'offline-test-token'
+function Invoke-RestMethod {
+    param($Uri,$Headers,$TimeoutSec,$MaximumRedirection)
+    if ($Uri -notlike 'https://api.github.com/*' -or $Headers.Authorization -ne 'Bearer offline-test-token') {
+        throw 'GitHub request did not use the existing authenticated quota'
+    }
+    return @{ok=$true}
+}
+if (!(Api 'repos/qbsoft/TeKnowra/actions/runs' $false).ok) { throw 'Public workflow metadata failed' }
+if (!(Api 'users/qbsoft/packages/container/tyer-mcp/versions' $true).ok) { throw 'Private package metadata failed' }
+Remove-Variable packageToken -Scope Script
+Write-Host 'PASS: public workflow and private package metadata reuse existing authentication'

@@ -30,7 +30,9 @@ function Docker([string[]]$Arguments) {
 }
 function Api([string]$Path, [bool]$Private = $false) {
     $headers = @{'User-Agent'='TeKnowra-Release'; Accept='application/vnd.github+json'}
-    if ($Private) { $headers.Authorization = 'Bearer ' + $script:packageToken }
+    # Both public workflow and private package reads must use the existing
+    # credential; anonymous requests share a proxy IP's easily exhausted quota.
+    $headers.Authorization = 'Bearer ' + $script:packageToken
     for ($attempt = 1; $attempt -le 3; $attempt++) {
         try {
             $result = Invoke-RestMethod ('https://api.github.com/' + $Path) -Headers $headers -TimeoutSec 30 -MaximumRedirection 0
