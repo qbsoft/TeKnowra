@@ -85,3 +85,14 @@ jobs:
           docker tag teknowra-langflow-verify:$SHA ghcr.io/qbsoft/teknowra-langflow:cpu-$SHA
           docker push ghcr.io/qbsoft/teknowra-langflow:cpu-$SHA
           docker image inspect --format '{{json .RepoDigests}}' ghcr.io/qbsoft/teknowra-langflow:cpu-$SHA
+      - uses: docker/login-action@v3
+        with:
+          username: liugl2025
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Publish the same verified open-source runtime to Docker Hub
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          docker tag teknowra-langflow-verify:$SHA liugl2025/teknowra-langflow:cpu-$SHA
+          docker push liugl2025/teknowra-langflow:cpu-$SHA
+          docker image inspect --format '{{json .RepoDigests}}' liugl2025/teknowra-langflow:cpu-$SHA

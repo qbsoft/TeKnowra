@@ -27,7 +27,7 @@ def configuration(path):
         images = data['images']
         if (data['project'] != 'teknowra' or set(images) != {'app', 'langflow'}
                 or images['app'] != 'liugl2025/teknowra-app:latest'
-                or not re.fullmatch(r'ghcr\.io/qbsoft/teknowra-langflow@sha256:[0-9a-f]{64}', images['langflow'])):
+                or not re.fullmatch(r'(?:ghcr\.io/qbsoft|liugl2025)/teknowra-langflow@sha256:[0-9a-f]{64}', images['langflow'])):
             raise ValueError()
         compose = data['compose_files']
         guards = data['guard_files']

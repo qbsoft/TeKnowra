@@ -41,6 +41,17 @@ class ProductionRecoveryConfigurationTests(unittest.TestCase):
             config.write_text(json.dumps(data))
             with self.assertRaises(m.RecoveryError):
                 m.configuration(config)
+
+    def test_verified_owner_dockerhub_digest_is_allowed_but_other_registry_is_not(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config, _, data = self.fixture(Path(directory))
+            data['images']['langflow'] = 'liugl2025/teknowra-langflow@sha256:' + '2' * 64
+            config.write_text(json.dumps(data))
+            m.configuration(config)
+            data['images']['langflow'] = 'another-owner/teknowra-langflow@sha256:' + '2' * 64
+            config.write_text(json.dumps(data))
+            with self.assertRaises(m.RecoveryError):
+                m.configuration(config)
             data['project'] = 'other-project'
             config.write_text(json.dumps(data))
             with self.assertRaises(m.RecoveryError):
