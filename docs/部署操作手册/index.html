@@ -113,10 +113,11 @@
 </tbody>
 </table>
 <p>密码与密钥不写入本手册或Git。服务器受限账号存储为 Windows <code>D:/deploy/TeKnowra/langflow/private/editor-runner.json</code>（编辑账号），跳板机 <code>/root/.teknowra-access/ontology.json</code>（看板账号）；仅由有权管理员通过受控渠道取用，禁止整份复制/打印/提交。编辑、runner、服务API Key及看板Basic凭据互不通用；不复制本机测试凭据到生产。研发详细登录、权限与发布步骤见<a href="../研发操作手册/README.md#public-research-login">研发手册第2.4节</a>。</p>
+<p>Wren 看板密码由网关 HTTP Basic 认证管理，当前没有网页自助改密入口。管理员在跳板机以隐藏输入方式设置新密码，同步更新受限存储 <code>/root/.teknowra-access/ontology.json</code> 与 <code>/etc/ssl/yihe/ontology.htpasswd</code> 中该账号的密码哈希，保留原用户名、其他账号和文件权限；先留受限回退副本，再原子替换并验证新凭据成功、旧凭据失效及匿名仍401。不要把明文写进命令行参数、shell历史、文档或Git。此操作仅改变看板Basic密码，不修改Langflow、CRM、TeKnowra、Casdoor或本人OAuth。改密后浏览器可能缓存旧认证，重新开启无痕窗口登录。上述是运维步骤，本次手册更新没有执行改密。</p>
 <p>生产 Flow 经既有 TLS 网关与独立受控隧道到宿主回环17861，隧道远端17863仅允许跳板机本机访问；不要公开内部编辑端口。隧道任务 <code>TeKnowra-Flow-Tunnel</code>，网关容器 <code>yihe-proxy</code>；Wren 看板服务 <code>teknowra-wren-board</code> 在跳板机独立自启，配置目录 <code>/opt/teknowra-wren-board</code>，经同网关Basic认证对外提供生产语义快照。它不是Wren引擎8099的公网直连，也不是开放业务查询后台。</p>
 <p>Wren 公网仅提供模型目录、说明、关系图及现有审定/验收结果读取；写入、配置与试问接口被拒绝。真实业务问数走 TeKnowra → 本人CRM OAuth → MCP → Wren受控网关。后续模型发布必须同步快照，不能把快照显示当作运行模型或权限已更新。</p>
 <p>前端容器设置 <code>LANGFLOW_EDITOR_URL=https://flow.yihe.work:9222</code>，入口脚本启动时写入 <code>config.js</code>。生产覆盖配置位于 <code>D:/deploy/TeKnowra/langflow/production.override.json</code>。更改容器环境须仅重建前端，保留原Compose项目/文件、卷及回退版本；restart或只改env_file不会读取新环境。按已批准版本执行 <code>up -d --no-deps --pull never --no-build frontend</code> 前，先准备本机已验证镜像与回退镜像并校验Compose差异。本机开发不设置该值，继续默认 <code>http://127.0.0.1:7861</code>。不要为浏览器公网访问修改内部 <code>TEKNOWRA_LANGFLOW_URL</code>，能力桥仍为受控回环。</p>
-<p>验收须同时检查：匿名Flow API返回401/403；看板匿名401、已有Basic认证读取200、写入及试问403；TeKnowra真实点击携带目标草稿ID；本机默认地址保持。2026-10-21已完成上述服务端检查及生产按钮点击；之后用户客户端报告看板无法访问，尚待错误码定位，不把该客户端写为已恢复。遇到浏览器连接/DNS/证书错误，先核对其错误码和代理路由；收到401再检查账号，不关闭认证或复用admin令牌。</p>
+<p>验收须同时检查：匿名Flow API返回401/403；看板匿名401、已有Basic认证读取200、写入及试问403；TeKnowra真实点击携带目标草稿ID；本机默认地址保持。2026-10-21已完成上述服务端检查及生产按钮点击；用户此前的浏览器错误为 <code>ERR_INVALID_AUTH_CREDENTIALS</code>，使用已有看板独立凭据后已于2026-10-21确认成功登录，访问问题已排除。此次排查未重置密码、关闭认证或改变权限。遇到浏览器连接/DNS/证书错误，先核对其错误码和代理路由；收到401再检查账号，不关闭认证或复用admin令牌。</p>
 <h2 id="2">2. 安装前准备与版本记录</h2>
 <h3 id="21">2.1 必备清单</h3>
 <table>
