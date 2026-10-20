@@ -37,7 +37,7 @@ jobs:
             -v "$PWD/integrations/langflow:/source:ro" -v "$PWD/skills:/skills:ro" \
             -w /source -e PYTHONPATH=/source:/source/components "$IMAGE" \
             -m unittest discover -s tests -p 'test_components.py' -v
-          for test in test_skills test_reviewed_experts test_canonical_draft_policy; do
+          for test in test_skills test_reviewed_experts test_canonical_draft_policy test_recovery test_production_recovery; do
             docker run --rm --network none --entrypoint python \
               -v "$PWD/integrations/langflow:/source:ro" -w /source \
               -e PYTHONPATH=/source:/source/components "$IMAGE" \
@@ -62,11 +62,15 @@ jobs:
             "$IMAGE" langflow run --host 127.0.0.1 --port 7861
           ready=false
           for i in $(seq 1 36); do
-            if docker exec langflow-smoke python -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:7861/health", timeout=2)' 2>/dev/null; then
+            if docker exec langflow-smoke python -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:7861/health_check", timeout=2)' 2>/dev/null; then
               ready=true; break
             fi
             sleep 5
           done
+          if [ "$ready" != true ]; then
+            docker inspect --format 'status={{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}}' langflow-smoke
+            docker logs --tail 120 langflow-smoke 2>&1 | grep -Eiv 'password|secret|token|api.key' || true
+          fi
           docker stop langflow-smoke >/dev/null
           test "$ready" = true
       - uses: docker/login-action@v3
