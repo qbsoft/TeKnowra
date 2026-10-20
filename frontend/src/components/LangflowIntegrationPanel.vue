@@ -84,7 +84,9 @@ async function setupDraft(mode:'create'|'associate'|'sync'){
  finally{settingUp.value=false;}
 }
 function openEditor() {
-  if (info.value?.flow_id) window.open(localLangflowEditorUrl(info.value.flow_id), '_blank', 'noopener,noreferrer');
+  if (!info.value?.flow_id) return;
+  try { window.open(localLangflowEditorUrl(info.value.flow_id), '_blank', 'noopener,noreferrer'); }
+  catch { MessagePlugin.error('Langflow 编排地址配置无效，请联系管理员'); }
 }
 async function copyDirectory() {
   connecting.value = true;
