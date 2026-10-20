@@ -19,6 +19,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=dependencies /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH" \
     HOME=/app/data \
+    LANGFLOW_CONFIG_DIR=/app/data \
+    LANGFLOW_DATABASE_URL=sqlite:////app/data/langflow.db \
     PYTHONDONTWRITEBYTECODE=1 \
     LANGFLOW_AUTO_LOGIN=false \
     LANGFLOW_ENABLE_SIGNUP=false \
