@@ -68,6 +68,10 @@ class CRMWrenDocker(recovery.Docker):
             return None
         if item['project'] != 'crm' or item['service'] != actual:
             raise RecoveryError('container-identity-mismatch')
+        # CRM backend often has no Docker HEALTHCHECK; treat a running app as
+        # healthy so Wren can rebind after watchtower recreates the parent.
+        if service == 'app' and item.get('health') is None and item.get('running'):
+            item = {**item, 'health': 'healthy'}
         return {**item, 'service': service}
 
     def healthy(self, item):
