@@ -40,9 +40,10 @@ type CustomAgentHandler struct {
 	// nil in partially-wired unit tests, where the selection is left unchecked.
 	sandboxConfigs sandboxConfigLookup
 	// agentShare 只用于共享智能体的推荐问题，见 custom_agent_shared_suggestions.go（TeKnowra）
-	agentShare   interfaces.AgentShareService
-	usableSkills usableSkillLister
-	desktop      bool
+	agentShare         interfaces.AgentShareService
+	usableSkills       usableSkillLister
+	webSearchProviders interfaces.WebSearchProviderRepository
+	desktop            bool
 }
 
 // NewCustomAgentHandler creates a new custom agent handler instance
@@ -55,16 +56,18 @@ func NewCustomAgentHandler(
 	agentShare interfaces.AgentShareService,
 	host service.HostSandboxManager,
 	usableSkills *service.TenantSkillService,
+	webSearchProviders interfaces.WebSearchProviderRepository,
 ) *CustomAgentHandler {
 	return &CustomAgentHandler{
-		service:        service,
-		imService:      imService,
-		disabledRepo:   disabledRepo,
-		userService:    userService,
-		sandboxConfigs: sandboxConfigs,
-		agentShare:     agentShare,
-		usableSkills:   usableSkills,
-		desktop:        host.Desktop,
+		service:            service,
+		imService:          imService,
+		disabledRepo:       disabledRepo,
+		userService:        userService,
+		sandboxConfigs:     sandboxConfigs,
+		agentShare:         agentShare,
+		usableSkills:       usableSkills,
+		webSearchProviders: webSearchProviders,
+		desktop:            host.Desktop,
 	}
 }
 
@@ -109,6 +112,8 @@ type PatchAgentRequest struct {
 	SelectedSkills *[]string `json:"selected_skills" extensions:"x-agent,x-agent-maximum=50"`
 	// Whether the agent may search the web
 	WebSearchEnabled *bool `json:"web_search_enabled" extensions:"x-agent"`
+	// Empty follows the workspace default; changing the provider does not enable search.
+	WebSearchProviderID *string `json:"web_search_provider_id" extensions:"x-agent"`
 	// Whether earlier turns are kept in the conversation context
 	MultiTurnEnabled *bool `json:"multi_turn_enabled" extensions:"x-agent"`
 }
@@ -161,6 +166,9 @@ func (p PatchAgentRequest) apply(agent *types.CustomAgent) UpdateAgentRequest {
 	}
 	if p.WebSearchEnabled != nil {
 		cfg.WebSearchEnabled = *p.WebSearchEnabled
+	}
+	if p.WebSearchProviderID != nil {
+		cfg.WebSearchProviderID = *p.WebSearchProviderID
 	}
 	if p.MultiTurnEnabled != nil {
 		cfg.MultiTurnEnabled = *p.MultiTurnEnabled
@@ -253,7 +261,7 @@ func (h *CustomAgentHandler) CreateAgent(c *gin.Context) {
 		Avatar:      req.Avatar,
 		Config:      req.Config,
 	}
-	agent.EnsureDefaults()
+	agent.EnsureCreationDefaults()
 	// The DB column (varchar(64)) has no application-level guard, so an
 	// oversized avatar used to reach postgres and come back as a raw driver
 	// 500. Reject it here with a 400 that names the limit.
@@ -538,7 +546,7 @@ func (h *CustomAgentHandler) UpdateAgent(c *gin.Context) {
 // @Security     Bearer
 // @Security     ApiKeyAuth
 // @x-agent      {"id":"agent.update","risk":"write","target":"agent.get","label":"name","require_complete_target":true}
-// @x-agent-hint "Changes the listed settings of an agent; a field left out is kept. agent_mode is quick-answer or smart-reasoning; MCP services and skills only run in smart-reasoning, and switching to it turns multi-turn on. system_prompt replaces the whole prompt, so start from the full prompt agent.get returns. Take model_id from model.list (a KnowledgeQA model), knowledge base ids from knowledge_base.list and MCP service ids from mcp_service.list. Take skill names exactly from skill.list with the agent's sandbox_config_id. knowledge_base_ids, mcp_service_ids or selected_skills alone also switch that scope to selected."
+// @x-agent-hint "Changes the listed settings of an agent; a field left out is kept. agent_mode is quick-answer or smart-reasoning; MCP services and skills only run in smart-reasoning, and switching to it turns multi-turn on. system_prompt replaces the whole prompt, so start from the full prompt agent.get returns. Take model_id from model.list (a KnowledgeQA model), knowledge base ids from knowledge_base.list and MCP service ids from mcp_service.list. Take web_search_provider_id from web_search_provider.list; an empty value follows the workspace default, and selecting a provider does not change web_search_enabled. Take skill names exactly from skill.list with the agent's sandbox_config_id. knowledge_base_ids, mcp_service_ids or selected_skills alone also switch that scope to selected."
 // @Router       /agents/{id} [patch]
 func (h *CustomAgentHandler) PatchAgent(c *gin.Context) {
 	ctx := c.Request.Context()
@@ -572,6 +580,21 @@ func (h *CustomAgentHandler) PatchAgent(c *gin.Context) {
 		}
 		_ = c.Error(errors.NewInternalServerError("Failed to update agent"))
 		return
+	}
+	if patch.WebSearchProviderID != nil && *patch.WebSearchProviderID != "" {
+		if h.webSearchProviders == nil {
+			_ = c.Error(errors.NewServiceUnavailableError("Search provider lookup unavailable"))
+			return
+		}
+		provider, lookupErr := h.webSearchProviders.GetByID(ctx, existing.TenantID, *patch.WebSearchProviderID)
+		if lookupErr != nil {
+			_ = c.Error(errors.NewInternalServerError("Could not look up search provider"))
+			return
+		}
+		if provider == nil {
+			_ = c.Error(errors.NewBadRequestError("Search provider not found in this workspace"))
+			return
+		}
 	}
 	req := patch.apply(existing)
 	if err := req.Config.ValidateExecutionEngine(); err != nil {

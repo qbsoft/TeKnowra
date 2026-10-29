@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Tencent/WeKnora/internal/datasource"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -151,16 +152,8 @@ func (c *Client) GetTenantAccessToken(ctx context.Context) (string, error) {
 	}
 	c.tokenExpAt = time.Now().Add(ttl)
 
-	prefixLen := 8
-	if len(result.TenantAccessToken) < prefixLen {
-		prefixLen = len(result.TenantAccessToken)
-	}
-	suffixLen := 4
-	if len(result.TenantAccessToken) < suffixLen {
-		suffixLen = len(result.TenantAccessToken)
-	}
-	logger.Infof(ctx, "[Feishu] got tenant_access_token: %s...%s expire=%ds",
-		result.TenantAccessToken[:prefixLen], result.TenantAccessToken[len(result.TenantAccessToken)-suffixLen:], result.Expire)
+	// Never log token material: even a prefix/suffix narrows the bearer credential.
+	logger.Infof(ctx, "[Feishu] tenant access token refreshed expire=%ds", result.Expire)
 
 	return c.tokenCache, nil
 }
@@ -357,7 +350,14 @@ func truncate(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "..."
+	// Back off to a rune boundary: a partial multi-byte rune is invalid UTF-8,
+	// and this preview reaches sync_logs / data_sources through the sync error
+	// message, which PostgreSQL rejects. Same rule as #4555.
+	cut := maxLen
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "..."
 }
 
 // ListWikiSpaces returns all wiki spaces accessible to the app.

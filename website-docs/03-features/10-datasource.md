@@ -184,22 +184,25 @@
 
 #### Confluence（`connector/confluence/`）
 
-支持 Confluence Server / Data Center 与 Confluence Cloud，均使用 HTTP Basic 认证。
+支持 Confluence Server / Data Center 与 Confluence Cloud。Server/DC 可使用个人访问令牌（PAT，Bearer 认证）或用户名与密码（HTTP Basic）；Cloud 使用邮箱与 API token（HTTP Basic）。
 
 | 字段 | 必填 | 说明 |
 | --- | --- | --- |
 | `edition` | 否 | `server`（默认，Server / Data Center）或 `cloud` |
 | `base_url` | 是 | Confluence 地址，缺少协议时补 `https://`；Cloud 填 `https://<站点>.atlassian.net` 时自动补 `/wiki` |
-| `username` | 是 | Server/DC 用户名；Cloud 为 Atlassian 账号邮箱 |
-| `password` | Server/DC 必填 | Server/DC 账号密码 |
+| `username` | Basic 认证必填 | Server/DC 用户名；Cloud 为 Atlassian 账号邮箱；Server/DC 使用 PAT 时可留空 |
+| `token` | 否 | Server/DC 个人访问令牌；填写后优先使用 Bearer 认证，无需用户名和密码；Cloud 不使用此字段 |
+| `password` | Server/DC 未填 PAT 时必填 | Server/DC 账号密码 |
 | `api_token` | Cloud 必填 | 在 Atlassian 账号的 API tokens 页面创建 |
 
-`edition`、`base_url`、`username` 不属于密钥，界面会同时写入 Settings 以便编辑时回显；`password` / `api_token` 只存加密凭据。
+`edition`、`base_url`、`username` 不属于密钥，界面会同时写入 Settings 以便编辑时回显；`token` / `password` / `api_token` 只存加密凭据。
+
+Server/DC PAT 适用于 Confluence 7.9 及以上版本，可在个人设置的 Personal access tokens 中创建，详见 [Atlassian 官方说明](https://confluence.atlassian.com/enterprise/using-personal-access-tokens-1026032365.html)。连接测试、空间与页面读取以及同源私有图片下载使用同一种认证方式。
 
 <Screenshot
-  src="/screenshots/datasource-confluence.png"
-  caption="Confluence 数据源：版本选择与凭据填写"
-  hint="数据源编辑弹窗选中 Confluence，展示「Confluence 版本」下拉（Server / Data Center、Cloud）、地址、用户名与 Cloud API 令牌字段，以及测试连接后的空间选择列表。" />
+  src="/screenshots/datasource-confluence-pat.png"
+  caption="Confluence Server/DC 数据源：使用个人访问令牌"
+  hint="Server / Data Center 凭据表单：填写 PAT 后，用户名和密码可留空。截图使用本地模拟配置和示例令牌。" />
 
 - **范围**：资源列表是凭据可见的空间（扁平列表），至少选择一个空间；同步空间内全部已发布页面，不导入附件和博客文章。
 - **内容**：取页面渲染后的 HTML 转为 Markdown（每页一个 `.md` 条目），正文为空时仅保留标题。条目 metadata 带 `space_key`、`space_name`、`page_id`，有作者时带 `creator`。
@@ -230,9 +233,12 @@
 
 - **认证**：企业内部应用 Client ID、Client Secret 和有目标知识库访问权限的操作人 Union ID；开通 `Wiki.Workspace.Read`、`Wiki.Node.Read`、`Storage.File.Read` 后发布应用。
 - **范围**：选择知识库、文件夹或单篇 `ALIDOC/adoc` 在线文档，通过公开 Wiki / Blocks API 转为 Markdown。当前不导入钉钉表格，也不依赖异步导出回调。
-- **上传文件（默认关闭）**：`Settings.include_uploaded_files`（默认 `false`）开启后，所选范围内钉盘中的普通上传附件（`FILE/DOCUMENT` 的 `docx` / `pptx` / `xlsx` / `pdf`）会被下载并交给 WeKnora 自带解析器入库，文件名保留原扩展名、按扩展名选择解析器；单个文件上限 64 MiB，超出上限即失败且不重试（重签名只会拿到同样的字节）。下载失败（401/403/404 等）会重新申请签名后重试，最多 3 次。
+- **上传文件（默认关闭）**：`Settings.include_uploaded_files`（默认 `false`）开启后，所选范围内钉盘中的普通上传附件（`FILE/DOCUMENT` 的 `docx` / `pptx` / `xlsx` / `pdf`）会被下载并交给 WeKnora 自带解析器入库，文件名保留原扩展名、按扩展名选择解析器；单个文件上限 64 MiB，超出上限记录为文件失败并提示压缩或拆分，本轮不重复下载（重签名只会拿到同样的字节）。即使本轮待处理文件全部超限，也记为部分成功并保留后续定时同步；失败文件不推进成功版本游标，压缩或拆分后可在后续同步恢复。下载失败（401/403/404 等）会重新申请签名后重试，最多 3 次。
 - **开关的默认值与成本**：`include_uploaded_files` 未设置或非法值一律按 `false` 处理，因此**存量数据源升级后的下一次同步（含增量同步）行为不变**，不会突然开始下载和向量化附件。打开后，这些文件的正文会进入知识库，占用存储并产生 embedding 成本；不需要时请保持关闭。关闭时连接校验、资源列表和同步都会跳过上传附件，同步日志给出的原因是 `include_uploaded_files` 未启用，而不是类型不支持。
 - **开关的作用点**：测试连接（校验）、资源选择列表、全量同步与增量同步共用同一个判据，一处关闭即处处一致。
+- **保留目录结构**：开启 `settings.preserve_folder_structure` 后，以工作区名为根目录保留来源层级。默认关闭，不改变已有数据源的导入路径；同一文档不因选择整个工作区、子目录或单篇文档而产生不同路径。
+- **更新已有目录**：开启后仅新读取的文档使用新结构。需要整理全部已导入内容时，手动执行一次全量同步。开启期间，来源目录由连接器管理，手动调整的本地目录可能在后续同步时被覆盖。
+- **目录与文件范围分别设置**：目录开关只影响入库路径；`include_uploaded_files` 决定是否导入上传到钉盘的 Office/PDF 等文件。在线文档不受后者影响。目录深度和长度仍遵循知识库路径限制。
 - **同步**：按文档 `modifiedTimestamp`（毫秒）增量读取，缺失时回退 `modifiedTime`；合并重叠选择。全量同步也会对照上次游标对账删除，避免 `sync_mode=full` 漏删。目录遍历不完整时暂缓删除。
 - **正文**：公开 Blocks API 只返回文档根下的一级块；高亮块等容器若响应里带有 `children` 会继续渲染，否则在元数据中标记 `nested_blocks_unavailable`，避免把残缺正文当成完整成功。
 - **校验**：测试连接会列出知识库、探测根节点列表，并在根下存在在线文档时试读 Blocks；对已开启摄取的上传文件只解析存储位置并申请下载 URL，不下载正文，以便尽早发现缺少 `Wiki.Node.Read` / `Storage.File.Read`，同时让校验对多兆字节文件保持廉价。

@@ -101,6 +101,14 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 		kbImagesRead.GET("/gallery-config", g.Viewer(), g.KBAccessRead("id"), handler.GetGalleryConfig)
 	}
 
+	// Whole-KB index rebuild after an indexing-strategy change (called by the
+	// KB settings modal via POST /api/v1/knowledge-bases/:id/rebuild-index).
+	// Content write like /knowledge/batch-reparse: ingest-capable API keys
+	// may call it; JWT callers need Contributor+ with KB write access, and
+	// the handler re-validates ownership before enqueueing.
+	kbRebuild := g.apiKeyGroup(r.Group("/knowledge-bases/:id"), apiKeyIngest(apiKeyFullAccess()))
+	kbRebuild.POST("/rebuild-index", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.RebuildKnowledgeBaseIndex)
+
 	// 知识路由组（URL :id is a knowledge id; the guard walks it to the parent KB）
 	kgrp := r.Group("/knowledge")
 	k := g.apiKeyGroup(kgrp, apiKeyIngest(apiKeyFullAccess()))
@@ -176,6 +184,7 @@ func RegisterFAQRoutes(r *gin.RouterGroup, handler *handler.FAQHandler, g *rbacG
 		faqRead.GET("/entries/export", g.Viewer(), g.KBAccessRead("id"), handler.ExportEntries)
 		faqRead.GET("/entries/:entry_id", g.Viewer(), g.KBAccessRead("id"), handler.GetEntry)
 		faq.POST("/entries", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.UpsertEntries)
+		faq.PATCH("/entries", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.PatchEntriesBatch)
 		faq.POST("/entry", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.CreateEntry)
 		faq.PUT("/entries/:entry_id", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.UpdateEntry)
 		faq.POST("/entries/:entry_id/similar-questions", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.AddSimilarQuestions)
