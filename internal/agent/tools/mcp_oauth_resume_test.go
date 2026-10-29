@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/agent/approval"
+	"github.com/Tencent/WeKnora/internal/agent/policy"
 	"github.com/Tencent/WeKnora/internal/agent/runbudget"
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/event"
@@ -67,8 +68,13 @@ type resumePolicyGate struct {
 	scenario string
 }
 
-func (g *resumePolicyGate) NeedsApproval(context.Context, uint64, string, string) bool {
-	return strings.Contains(g.scenario, "approval_then_oauth") || g.scenario == "modified_args"
+// Upstream now decides via Action+policy.Decide; Always forces Ask so the
+// TeKnowra pin/OAuth scenarios still exercise RequestAndWait.
+func (g *resumePolicyGate) Action(context.Context, uint64, string, *types.MCPTool) policy.Action {
+	if strings.Contains(g.scenario, "approval_then_oauth") || g.scenario == "modified_args" {
+		return policy.Action{Risk: policy.RiskWrite, Always: true}
+	}
+	return policy.Action{Risk: policy.RiskWrite}
 }
 func (g *resumePolicyGate) RequestAndWait(ctx context.Context, _ approval.PendingRequest) (approval.Decision, error) {
 	if g.scenario == "slow_approval_then_oauth" {

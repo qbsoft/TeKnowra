@@ -12,6 +12,9 @@ import (
 // produce native agent snapshots, so enabling native suspension is a no-op.
 func (e *Engine) EnableSuspension(json.RawMessage) {}
 func (e *Engine) SetInteractive(bool)              {}
+// SetRunMode is accepted for AgentEngine compatibility; prompt attendance is
+// still enforced by the in-process OAuth/approval path, not native suspension.
+func (e *Engine) SetRunMode(types.RunMode) {}
 
 // Never restart Execute to emulate resume: that could repeat business calls.
 func (e *Engine) Resume(context.Context, string, string, []chat.Message, []byte, *types.AgentPrompt) (*types.AgentState, error) {

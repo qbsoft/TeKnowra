@@ -28,7 +28,7 @@ func (h *Handler) persistUnavailableSharedAgent(ctx context.Context, c *gin.Cont
 	if err := h.rejectIfSessionRewinding(ctx, session.ID); err != nil {
 		return err
 	}
-	release, held := h.holdQATurn(ctx, req)
+	ctx, release, held := h.holdQATurn(ctx, req)
 	if !held {
 		if last := c.Errors.Last(); last != nil {
 			return last.Err
